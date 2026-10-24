@@ -1,0 +1,1081 @@
+<?php
+// finance_reports.php - (Royal Finance Hub V14.0 - Full 360 Integration)
+// تم إصلاح معادلات الجمع وإضافة مسيرات الموظفين والسلف
+
+error_reporting(E_ALL);
+
+require 'auth.php'; 
+require 'config.php'; 
+require_once 'finance_engine.php';
+app_handle_lang_switch($conn);
+$isEnglish = app_current_lang($conn) === 'en';
+$creditReallocateMsg = '';
+$creditReallocateErr = '';
+
+$appName = app_setting_get($conn, 'app_name', 'Arab Eagles');
+
+$saasTenantFilter = trim((string)($_GET['saas_tenant'] ?? ''));
+$saasStatusFilter = strtolower(trim((string)($_GET['saas_status'] ?? 'all')));
+$saasMethodFilter = strtolower(trim((string)($_GET['saas_method'] ?? 'all')));
+$saasViewFilter = strtolower(trim((string)($_GET['saas_view'] ?? 'all')));
+if (!in_array($saasStatusFilter, ['all', 'issued', 'paid', 'posted', 'reversed', 'cancelled', 'draft'], true)) {
+    $saasStatusFilter = 'all';
+}
+if (!in_array($saasMethodFilter, ['all', 'bank_transfer', 'instapay', 'wallet', 'cash', 'card', 'check', 'gateway', 'manual'], true)) {
+    $saasMethodFilter = 'all';
+}
+if (!in_array($saasViewFilter, ['all', 'invoices', 'payments'], true)) {
+    $saasViewFilter = 'all';
+}
+$saasExportMode = strtolower(trim((string)($_GET['saas_export'] ?? '')));
+$saasExportRequested = ($saasExportMode === 'csv');
+
+if (!app_user_can('finance.reports.view')) {
+    http_response_code(403);
+    require 'header.php';
+    echo "<div class='container' style='margin-top:30px;'><div style='background:#1d0f0f;border:1px solid #5b2020;border-radius:12px;padding:20px;color:#ffb3b3;'>" . app_h(app_tr('⛔ غير مصرح لك بالدخول إلى التقارير المالية.', '⛔ You are not authorized to access finance reports.')) . "</div></div>";
+    require 'footer.php';
+    exit;
+}
+
+if (isset($_GET['credit_action']) && $_GET['credit_action'] === 'reallocate_receipt') {
+    if (!app_user_can('finance.transactions.update')) {
+        $creditReallocateErr = app_tr('لا تملك صلاحية إعادة توزيع السندات.', 'You do not have permission to reallocate receipts.');
+    } elseif (!app_verify_csrf($_GET['_token'] ?? '')) {
+        $creditReallocateErr = app_tr('رمز التحقق غير صالح، حدّث الصفحة وحاول مجددًا.', 'Invalid verification token. Refresh the page and try again.');
+    } else {
+        $receiptId = (int)($_GET['receipt_id'] ?? 0);
+        if (function_exists('finance_reallocate_receipt_fifo')) {
+            $reallocateResult = finance_reallocate_receipt_fifo($conn, $receiptId, (string)($_SESSION['name'] ?? 'Admin'));
+            if (!empty($reallocateResult['ok'])) {
+                $creditReallocateMsg = (string)($reallocateResult['message'] ?? app_tr('تمت إعادة توزيع السند بنجاح.', 'Receipt reallocation completed successfully.'));
+            } else {
+                $creditReallocateErr = (string)($reallocateResult['message'] ?? app_tr('تعذر إعادة توزيع السند.', 'Could not reallocate the receipt.'));
+            }
+        } else {
+            $creditReallocateErr = app_tr('محرك إعادة التوزيع غير متاح حاليًا.', 'Receipt reallocation engine is currently unavailable.');
+        }
+    }
+}
+
+$saasFinanceSummary = null;
+$saasInvoiceRows = [];
+$saasPaymentRows = [];
+$saasFilterQuery = [];
+$saasLimit = $saasExportRequested ? 5000 : 12;
+if (app_is_owner_hub() && app_saas_mode_enabled()) {
+    try {
+        $controlDbConfig = app_saas_control_db_config([
+            'host' => app_env('DB_HOST', 'localhost'),
+            'user' => app_env('DB_USER', ''),
+            'pass' => app_env('DB_PASS', ''),
+            'name' => app_env('DB_NAME', ''),
+            'port' => (int)app_env('DB_PORT', '3306'),
+            'socket' => app_env('DB_SOCKET', ''),
+        ]);
+        $controlConn = app_saas_open_control_connection($controlDbConfig);
+        app_saas_ensure_control_plane_schema($controlConn);
+        $saasFinanceSummary = saas_finance_summary($controlConn);
+        if ($saasTenantFilter !== '') {
+            $saasFilterQuery['saas_tenant'] = $saasTenantFilter;
+        }
+        if ($saasStatusFilter !== 'all') {
+            $saasFilterQuery['saas_status'] = $saasStatusFilter;
+        }
+        if ($saasMethodFilter !== 'all') {
+            $saasFilterQuery['saas_method'] = $saasMethodFilter;
+        }
+        if ($saasViewFilter !== 'all') {
+            $saasFilterQuery['saas_view'] = $saasViewFilter;
+        }
+
+        if ($saasViewFilter !== 'payments') {
+            $invoiceSql = "
+                SELECT i.invoice_number, i.status, i.amount, i.currency_code, i.due_date, i.paid_at, i.payment_ref,
+                       t.tenant_name, t.tenant_slug
+                FROM saas_subscription_invoices i
+                INNER JOIN saas_tenants t ON t.id = i.tenant_id
+                WHERE 1=1
+            ";
+            if ($saasTenantFilter !== '') {
+                $tenantLike = '%' . $controlConn->real_escape_string($saasTenantFilter) . '%';
+                $invoiceSql .= " AND (t.tenant_name LIKE '{$tenantLike}' OR t.tenant_slug LIKE '{$tenantLike}')";
+            }
+            if (in_array($saasStatusFilter, ['issued', 'paid', 'cancelled', 'draft'], true)) {
+                $invoiceSql .= " AND i.status = '" . $controlConn->real_escape_string($saasStatusFilter) . "'";
+            }
+            $invoiceSql .= " ORDER BY i.id DESC LIMIT " . (int)$saasLimit;
+            $invoiceRes = $controlConn->query($invoiceSql);
+            while ($invoiceRes && ($row = $invoiceRes->fetch_assoc())) {
+                $saasInvoiceRows[] = $row;
+            }
+        }
+
+        if ($saasViewFilter !== 'invoices') {
+            $paymentSql = "
+                SELECT p.amount, p.currency_code, p.payment_method, p.payment_ref, p.paid_at, p.status, p.notes,
+                       i.invoice_number,
+                       t.tenant_name, t.tenant_slug
+                FROM saas_subscription_invoice_payments p
+                INNER JOIN saas_subscription_invoices i ON i.id = p.invoice_id
+                INNER JOIN saas_tenants t ON t.id = p.tenant_id
+                WHERE 1=1
+            ";
+            if ($saasTenantFilter !== '') {
+                $tenantLike = '%' . $controlConn->real_escape_string($saasTenantFilter) . '%';
+                $paymentSql .= " AND (t.tenant_name LIKE '{$tenantLike}' OR t.tenant_slug LIKE '{$tenantLike}')";
+            }
+            if (in_array($saasStatusFilter, ['posted', 'reversed'], true)) {
+                $paymentSql .= " AND p.status = '" . $controlConn->real_escape_string($saasStatusFilter) . "'";
+            }
+            if ($saasMethodFilter !== 'all') {
+                $paymentSql .= " AND p.payment_method = '" . $controlConn->real_escape_string($saasMethodFilter) . "'";
+            }
+            $paymentSql .= " ORDER BY p.id DESC LIMIT " . (int)$saasLimit;
+            $paymentRes = $controlConn->query($paymentSql);
+            while ($paymentRes && ($row = $paymentRes->fetch_assoc())) {
+                $saasPaymentRows[] = $row;
+            }
+        }
+        $controlConn->close();
+    } catch (Throwable $e) {
+        $saasFinanceSummary = null;
+        $saasInvoiceRows = [];
+        $saasPaymentRows = [];
+    }
+}
+
+if ($saasExportRequested && (app_is_owner_hub() && app_saas_mode_enabled()) && (!empty($saasInvoiceRows) || !empty($saasPaymentRows))) {
+    $exportName = 'saas-reconciliation-' . date('Ymd-His') . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=' . $exportName);
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['dataset', 'invoice_number', 'tenant_name', 'tenant_slug', 'status', 'amount', 'currency_code', 'payment_method', 'payment_ref', 'date', 'notes']);
+    foreach ($saasInvoiceRows as $row) {
+        fputcsv($out, [
+            'invoice',
+            (string)($row['invoice_number'] ?? ''),
+            (string)($row['tenant_name'] ?? ''),
+            (string)($row['tenant_slug'] ?? ''),
+            (string)($row['status'] ?? ''),
+            (string)($row['amount'] ?? ''),
+            (string)($row['currency_code'] ?? ''),
+            '',
+            (string)($row['payment_ref'] ?? ''),
+            (string)($row['due_date'] ?? ''),
+            '',
+        ]);
+    }
+    foreach ($saasPaymentRows as $row) {
+        fputcsv($out, [
+            'payment',
+            (string)($row['invoice_number'] ?? ''),
+            (string)($row['tenant_name'] ?? ''),
+            (string)($row['tenant_slug'] ?? ''),
+            (string)($row['status'] ?? ''),
+            (string)($row['amount'] ?? ''),
+            (string)($row['currency_code'] ?? ''),
+            (string)($row['payment_method'] ?? ''),
+            (string)($row['payment_ref'] ?? ''),
+            (string)($row['paid_at'] ?? ''),
+            (string)($row['notes'] ?? ''),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+require 'header.php';
+$csrfToken = app_csrf_token();
+
+// دالة الروابط (تم التحديث لدعم الموظفين)
+function get_finance_link($type, $id, $token) {
+    global $conn;
+    $id = (int)$id;
+    if (!in_array($type, ['client', 'supplier', 'employee'], true) || $id <= 0) {
+        return '#';
+    }
+    if(empty($token)) {
+        $token = bin2hex(random_bytes(16));
+        $table = ($type == 'client') ? 'clients' : (($type == 'supplier') ? 'suppliers' : 'users');
+        $stmt = $conn->prepare("UPDATE $table SET access_token=? WHERE id=?");
+        $stmt->bind_param("si", $token, $id);
+        $stmt->execute();
+        $stmt->close();
+    }
+    $path = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
+    $path = str_replace('/modules', '', $path);
+    return app_base_url() . $path . "/financial_review.php?token=" . rawurlencode((string)$token) . "&type=" . rawurlencode((string)$type);
+}
+
+// --- 2. المحرك المالي الدقيق (Fixed Calculation Engine) ---
+
+// أ. مستحقات العملاء (Receivables)
+$total_receivables = 0.0;
+$clientsForBalance = $conn->query("SELECT id FROM clients");
+while ($clientsForBalance && ($clientRow = $clientsForBalance->fetch_assoc())) {
+    $snapshot = function_exists('financeClientBalanceSnapshot') ? financeClientBalanceSnapshot($conn, (int)($clientRow['id'] ?? 0)) : ['net_balance' => 0];
+    $net = (float)($snapshot['net_balance'] ?? 0);
+    if ($net > 0.00001) {
+        $total_receivables += $net;
+    }
+}
+$total_receivables = round($total_receivables, 2);
+
+// ب. التزامات الموردين (Payables)
+$total_payables = 0.0;
+$suppliersForBalance = $conn->query("SELECT id FROM suppliers");
+while ($suppliersForBalance && ($supplierRow = $suppliersForBalance->fetch_assoc())) {
+    $snapshot = function_exists('financeSupplierBalanceSnapshot') ? financeSupplierBalanceSnapshot($conn, (int)($supplierRow['id'] ?? 0)) : ['net_balance' => 0];
+    $net = (float)($snapshot['net_balance'] ?? 0);
+    if ($net > 0.00001) {
+        $total_payables += $net;
+    }
+}
+$total_payables = round($total_payables, 2);
+
+// ج. مستحقات الموظفين (Salaries & Loans)
+$sql_employees_calc = "
+    SELECT 
+        (SELECT IFNULL(SUM(net_salary), 0) FROM payroll_sheets) as total_salaries,
+        (SELECT IFNULL(SUM(amount), 0) FROM financial_receipts WHERE type='out' AND category='salary') as total_paid_salaries,
+        (SELECT IFNULL(SUM(amount), 0) FROM financial_receipts WHERE type='out' AND category='loan') as total_loans_issued,
+        (SELECT IFNULL(SUM(amount), 0) FROM financial_receipts WHERE type='in' AND category IN ('loan','loan_repayment')) as total_loans_repaid_cash,
+        (SELECT IFNULL(SUM(loan_deduction), 0) FROM payroll_sheets) as total_loans_repaid_payroll
+";
+$e_calc = $conn->query($sql_employees_calc)->fetch_assoc();
+$total_loans_given = max(
+    0,
+    ((float)($e_calc['total_loans_issued'] ?? 0))
+    - ((float)($e_calc['total_loans_repaid_cash'] ?? 0))
+    - ((float)($e_calc['total_loans_repaid_payroll'] ?? 0))
+);
+
+// المستحق للموظفين يعتمد على المسيرات غير المسددة
+$total_due_salaries = 0.0;
+if (function_exists('app_table_has_column') && app_table_has_column($conn, 'payroll_sheets', 'remaining_amount')) {
+    $total_due_salaries = (float)($conn->query("SELECT IFNULL(SUM(CASE WHEN remaining_amount > 0 THEN remaining_amount ELSE 0 END), 0) FROM payroll_sheets WHERE status != 'paid'")->fetch_row()[0] ?? 0);
+} else {
+    // fallback للأنظمة القديمة
+    $total_due_salaries = $e_calc['total_salaries'] - $e_calc['total_paid_salaries'];
+}
+
+// هـ. ربحية العمليات (إيراد مرتبط بأوامر التشغيل - تكلفة خامات - تكلفة خدمات)
+$jobs_revenue_total = 0.0;
+if (app_table_has_column($conn, 'invoices', 'job_id')) {
+    $jobs_revenue_total = (float)($conn->query("SELECT IFNULL(SUM(total_amount),0) FROM invoices WHERE job_id IS NOT NULL AND job_id > 0")->fetch_row()[0] ?? 0);
+}
+$jobs_material_cost_total = 0.0;
+$jobs_service_cost_total = 0.0;
+try {
+    $jobs_material_cost_total = (float)($conn->query("SELECT IFNULL(SUM(total_cost),0) FROM inventory_transactions WHERE reference_type = 'job_material'")->fetch_row()[0] ?? 0);
+} catch (Throwable $e) {
+    $jobs_material_cost_total = 0.0;
+}
+try {
+    $jobs_service_cost_total = (float)($conn->query("SELECT IFNULL(SUM(total_cost),0) FROM job_service_costs")->fetch_row()[0] ?? 0);
+} catch (Throwable $e) {
+    $jobs_service_cost_total = 0.0;
+}
+$jobs_net_profit_total = $jobs_revenue_total - ($jobs_material_cost_total + $jobs_service_cost_total);
+
+// د. مؤشرات ذكاء مالي سريعة
+$current_month_start = date('Y-m-01');
+$openingBalanceFinanceFilter = "LOWER(TRIM(IFNULL(category, ''))) NOT IN ('opening_balance', 'client_opening', 'supplier_opening') AND TRIM(IFNULL(description, '')) NOT LIKE 'تسوية رصيد أول المدة%'";
+$m_in = (float)$conn->query("SELECT IFNULL(SUM(amount),0) FROM financial_receipts WHERE type='in' AND {$openingBalanceFinanceFilter} AND trans_date >= '{$current_month_start}'")->fetch_row()[0];
+$m_out = (float)$conn->query("SELECT IFNULL(SUM(amount),0) FROM financial_receipts WHERE type='out' AND {$openingBalanceFinanceFilter} AND trans_date >= '{$current_month_start}'")->fetch_row()[0];
+$m_net = $m_in - $m_out;
+$liquidity_pressure = ($total_receivables + $total_due_salaries > 0)
+    ? round(($total_payables + $total_due_salaries) / max(1, $total_receivables), 2)
+    : 0;
+$finance_alerts = [];
+if ($m_net < 0) $finance_alerts[] = app_tr('صافي التدفق النقدي الشهري بالسالب.', 'Monthly net cash flow is negative.');
+if ($liquidity_pressure > 1.2) $finance_alerts[] = app_tr('ضغط سيولة مرتفع: الالتزامات أعلى من التحصيل المتوقع.', 'High liquidity pressure: liabilities exceed expected collections.');
+if ($total_due_salaries > 0) $finance_alerts[] = app_tr('توجد رواتب مستحقة لم يتم صرفها بالكامل.', 'There are unpaid due salaries.');
+
+$taxSettlementRows = [];
+$taxSettlementVoucherCount = 0;
+$taxSettlementTotal = 0.0;
+$taxSettlementLawCount = 0;
+$creditWatch = function_exists('finance_credit_watch_report') ? finance_credit_watch_report($conn) : [
+    'client_credit_count' => 0,
+    'client_credit_total' => 0.0,
+    'receipt_credit_count' => 0,
+    'receipt_credit_total' => 0.0,
+    'client_credits' => [],
+    'receipt_credits' => [],
+];
+$clientNormalizationAllowed = function_exists('finance_client_normalization_allowed')
+    ? finance_client_normalization_allowed()
+    : true;
+$taxLawCatalog = function_exists('app_tax_law_catalog') ? app_tax_law_catalog($conn, false) : [];
+if (app_table_exists($conn, 'financial_receipts') && app_table_has_column($conn, 'financial_receipts', 'tax_law_key')) {
+    $taxSettlementSql = "
+        SELECT
+            COALESCE(NULLIF(TRIM(tax_law_key), ''), '__unassigned__') AS tax_law_group,
+            COUNT(*) AS voucher_count,
+            IFNULL(SUM(amount), 0) AS total_amount,
+            MAX(trans_date) AS last_payment_date,
+            MAX(id) AS last_voucher_id
+        FROM financial_receipts
+        WHERE type = 'out' AND category = 'tax'
+        GROUP BY COALESCE(NULLIF(TRIM(tax_law_key), ''), '__unassigned__')
+        ORDER BY total_amount DESC, tax_law_group ASC
+    ";
+    $taxSettlementRes = $conn->query($taxSettlementSql);
+    while ($taxSettlementRes && ($taxRow = $taxSettlementRes->fetch_assoc())) {
+        $groupKey = (string)($taxRow['tax_law_group'] ?? '__unassigned__');
+        $lawKey = $groupKey === '__unassigned__' ? '' : $groupKey;
+        $lawName = $lawKey !== '' && isset($taxLawCatalog[$lawKey]['name'])
+            ? (string)$taxLawCatalog[$lawKey]['name']
+            : ($lawKey !== '' ? $lawKey : app_tr('غير محدد', 'Unassigned'));
+        $voucherCount = (int)($taxRow['voucher_count'] ?? 0);
+        $totalAmount = (float)($taxRow['total_amount'] ?? 0);
+        $taxSettlementRows[] = [
+            'tax_law_key' => $lawKey,
+            'tax_law_name' => $lawName,
+            'voucher_count' => $voucherCount,
+            'total_amount' => $totalAmount,
+            'last_payment_date' => (string)($taxRow['last_payment_date'] ?? ''),
+            'last_voucher_id' => (int)($taxRow['last_voucher_id'] ?? 0),
+        ];
+        $taxSettlementVoucherCount += $voucherCount;
+        $taxSettlementTotal += $totalAmount;
+    }
+    $taxSettlementLawCount = count($taxSettlementRows);
+}
+
+// القوائم
+$clients_list = $conn->query("SELECT * FROM clients ORDER BY name ASC");
+$suppliers_list = $conn->query("SELECT * FROM suppliers ORDER BY name ASC");
+$employees_list = $conn->query("SELECT * FROM users WHERE is_active = 1 AND archived_at IS NULL ORDER BY full_name ASC");
+?>
+
+<style>
+    :root {
+        --royal-gold: #d4af37;
+        --royal-bg: #0b0b0b;
+        --royal-panel: #141414;
+        --royal-green: #2ecc71;
+        --royal-red: #e74c3c;
+        --royal-blue: #3498db;
+    }
+
+    body { background-color: var(--royal-bg); color: #fff; font-family: 'Cairo', sans-serif; margin: 0; padding-bottom: 50px; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+    /* Hero Dashboard */
+    .finance-hero {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+        margin-top: 20px;
+    }
+
+    .hero-card {
+        background: var(--royal-panel);
+        border: 1px solid #333;
+        border-radius: 16px;
+        padding: 25px;
+        position: relative;
+        overflow: hidden;
+        transition: 0.3s;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    }
+    .hero-card:hover { transform: translateY(-5px); border-color: var(--royal-gold); }
+    
+    .hero-card::after { content: ''; position: absolute; top: 0; right: 0; width: 4px; height: 100%; }
+    .card-rec::after { background: var(--royal-green); }
+    .card-pay::after { background: var(--royal-red); }
+    .card-emp::after { background: var(--royal-blue); }
+
+    .hero-label { font-size: 0.95rem; color: #aaa; display: block; margin-bottom: 10px; font-weight: bold; }
+    .hero-num { font-size: 2.2rem; font-weight: 900; color: #fff; display: flex; align-items: baseline; gap: 5px; }
+    .hero-icon { position: absolute; bottom: 10px; left: 20px; font-size: 4rem; opacity: 0.05; transition: 0.3s; }
+    .hero-card:hover .hero-icon { opacity: 0.15; transform: scale(1.1); }
+    .ai-finance-box{
+        margin: 10px 0 25px;
+        background: linear-gradient(135deg, rgba(31,209,255,0.08), rgba(25,195,125,0.08));
+        border: 1px solid rgba(31,209,255,0.25);
+        border-radius: 14px;
+        padding: 16px;
+    }
+    .ai-finance-grid{
+        display:grid;
+        grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+        gap:12px;
+        margin-top:10px;
+    }
+    .ai-fin-card{
+        background:#101418;
+        border:1px solid #1f2b33;
+        border-radius:10px;
+        padding:12px;
+    }
+    .saas-finance-box{
+        margin: 16px 0 24px;
+        background: linear-gradient(135deg, rgba(212,175,55,0.08), rgba(52,152,219,0.08));
+        border: 1px solid rgba(212,175,55,0.22);
+        border-radius: 14px;
+        padding: 16px;
+    }
+    .tax-settlement-box{
+        margin: 12px 0 24px;
+        background: linear-gradient(135deg, rgba(231,76,60,0.08), rgba(212,175,55,0.08));
+        border: 1px solid rgba(231,76,60,0.22);
+        border-radius: 14px;
+        padding: 16px;
+    }
+    .tax-settlement-table-wrap{
+        margin-top:14px;
+        overflow:auto;
+        border:1px solid #252525;
+        border-radius:12px;
+    }
+    .tax-settlement-table{
+        width:100%;
+        border-collapse:collapse;
+        min-width:640px;
+        background:#101418;
+    }
+    .tax-settlement-table th,
+    .tax-settlement-table td{
+        padding:12px 14px;
+        border-bottom:1px solid #222;
+        text-align:start;
+        white-space:nowrap;
+    }
+    .tax-settlement-table th{
+        background:#151515;
+        color:var(--royal-gold);
+        font-size:.9rem;
+    }
+    .tax-settlement-table td{
+        color:#eef2f6;
+    }
+    .tax-settlement-table tr:last-child td{
+        border-bottom:none;
+    }
+    .tax-badge{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:4px 10px;
+        border-radius:999px;
+        background:rgba(212,175,55,0.12);
+        border:1px solid rgba(212,175,55,0.24);
+        color:var(--royal-gold);
+        font-size:.82rem;
+        font-weight:700;
+    }
+    .saas-finance-grid{
+        display:grid;
+        grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+        gap:12px;
+        margin-top:12px;
+    }
+    .saas-fin-card{
+        background:#101418;
+        border:1px solid #1f2b33;
+        border-radius:10px;
+        padding:12px;
+    }
+    .saas-fin-card strong{
+        display:block;
+        color:#fff;
+        font-size:1.25rem;
+        margin-top:6px;
+    }
+    .saas-detail-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+        gap:16px;
+        margin: 0 0 24px;
+    }
+    .saas-detail-card{
+        background:#141414;
+        border:1px solid #2b2b2b;
+        border-radius:14px;
+        overflow:hidden;
+    }
+    .saas-detail-head{
+        padding:14px 16px;
+        border-bottom:1px solid #242424;
+        color:var(--royal-gold);
+        font-weight:800;
+    }
+    .saas-detail-body{
+        padding:14px;
+        display:grid;
+        gap:10px;
+        max-height:420px;
+        overflow:auto;
+    }
+    .saas-detail-row{
+        background:#0f0f0f;
+        border:1px solid #242424;
+        border-radius:12px;
+        padding:12px;
+    }
+    .saas-detail-row strong{
+        display:block;
+        color:#fff;
+        margin-bottom:6px;
+    }
+    .saas-detail-row small{
+        display:block;
+        color:#96a0aa;
+        margin-top:4px;
+    }
+    .saas-filter-bar{
+        display:grid;
+        grid-template-columns:minmax(180px,1.2fr) repeat(3,minmax(140px,.8fr)) auto auto;
+        gap:10px;
+        margin-top:14px;
+    }
+    .saas-filter-bar input,.saas-filter-bar select{
+        width:100%;
+        box-sizing:border-box;
+        border:1px solid #2c3137;
+        background:#101418;
+        color:#fff;
+        border-radius:10px;
+        padding:11px 12px;
+        font-family:'Cairo',sans-serif;
+    }
+    .saas-filter-btn{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        padding:11px 14px;
+        border-radius:10px;
+        font-weight:800;
+        text-decoration:none;
+        border:1px solid #2c3137;
+        background:#101418;
+        color:#fff;
+    }
+    .saas-filter-btn.primary{
+        background:linear-gradient(45deg, var(--royal-gold), #b8860b);
+        border-color:#b8860b;
+        color:#000;
+    }
+
+    /* Lists Style */
+    .section-container {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 25px;
+    }
+
+    .list-card {
+        background: var(--royal-panel);
+        border: 1px solid #333;
+        border-radius: 16px;
+        overflow: hidden;
+        display: flex; flex-direction: column;
+        height: auto;
+        min-height: 420px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+    }
+
+    .list-header {
+        background: rgba(255,255,255,0.02);
+        padding: 18px 20px;
+        border-bottom: 1px solid #2a2a2a;
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .list-title { margin: 0; color: var(--royal-gold); font-size: 1.2rem; display: flex; align-items: center; gap: 10px; }
+
+    .list-body { overflow-y: auto; padding: 15px; flex: 1; scrollbar-width: thin; scrollbar-color: var(--royal-gold) var(--royal-panel); }
+    .list-body::-webkit-scrollbar { width: 6px; }
+    .list-body::-webkit-scrollbar-thumb { background: var(--royal-gold); border-radius: 10px; }
+
+    .data-row {
+        display: flex; justify-content: space-between; align-items: center;
+        background: #0a0a0a; border: 1px solid #222;
+        padding: 15px; border-radius: 10px; margin-bottom: 10px;
+        transition: 0.2s; position: relative;
+    }
+    .data-row:hover { border-color: #444; background: #111; transform: translateX(-3px); border-right: 3px solid var(--royal-gold); }
+
+    .entity-name { font-weight: bold; color: #eee; font-size: 1rem; margin-bottom: 5px; }
+    .entity-meta { font-size: 0.8rem; color: #777; display: flex; gap: 10px; align-items: center; }
+    
+    .confirm-badge { color: var(--royal-green); background: rgba(46, 204, 113, 0.1); padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(46, 204, 113, 0.2); }
+    .pending-badge { color: #888; background: rgba(255, 255, 255, 0.05); padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 5px; }
+
+    .action-group { display: flex; gap: 8px; }
+    .act-btn {
+        width: 36px; height: 36px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        border: 1px solid #333; background: #1a1a1a; color: #aaa;
+        cursor: pointer; transition: 0.2s; text-decoration: none; font-size: 1rem;
+    }
+    .act-btn:hover { color: #fff; border-color: var(--royal-gold); background: var(--royal-gold); color: #000; box-shadow: 0 0 10px rgba(212, 175, 55, 0.3); }
+    .act-whatsapp:hover { background: #25D366; border-color: #25D366; color: #fff; box-shadow: 0 0 10px rgba(37, 211, 102, 0.3); }
+    .act-copy:hover { background: #3498db; border-color: #3498db; color: #fff; box-shadow: 0 0 10px rgba(52, 152, 219, 0.3); }
+
+    @media (max-width: 768px) {
+        .finance-hero { grid-template-columns: 1fr; }
+        .section-container { grid-template-columns: 1fr; }
+        .saas-filter-bar { grid-template-columns: 1fr; }
+        .list-card { min-height: 0; }
+        .data-row { flex-direction: column; align-items: stretch; }
+        .action-group { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+        .tax-settlement-table { min-width: 0; }
+        .tax-settlement-table th,
+        .tax-settlement-table td { white-space: normal; min-width: 120px; }
+    }
+    @media (min-width: 980px) {
+        .section-container { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
+        .list-card { height: 600px; }
+    }
+</style>
+
+<div class="container">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid #333; padding-bottom: 15px;">
+        <h2 style="color:var(--royal-gold); margin:0;"><i class="fa-solid fa-chart-pie"></i> <?php echo app_h(app_tr('مركز التقارير المالية', 'Finance Reports Center')); ?></h2>
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <a href="tax_reports.php" style="background:linear-gradient(45deg, var(--royal-gold), #b8860b); color:#000; text-decoration:none; padding:10px 16px; border-radius:10px; font-weight:800;"><i class="fa-solid fa-receipt"></i> <?php echo app_h(app_tr('التقارير الضريبية', 'Tax reports')); ?></a>
+            <div style="font-size:0.9rem; color:#888;"><?php echo app_h($appName); ?> <?php echo app_h(app_tr('System', 'System')); ?></div>
+        </div>
+    </div>
+
+    <div class="ai-finance-box">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+            <h3 style="margin:0; color:#1fd1ff;"><i class="fa-solid fa-brain"></i> <?php echo app_h(app_tr('الذكاء المالي', 'Financial Intelligence')); ?></h3>
+            <span style="color:#9ad6ff; font-size:.9rem;"><?php echo app_h(app_tr('تحليل تلقائي لحالة السيولة والتدفق', 'Automatic analysis of liquidity and cash flow')); ?></span>
+        </div>
+        <div class="ai-finance-grid">
+            <div class="ai-fin-card">
+                <div style="color:#8aa0ad; font-size:.85rem;"><?php echo app_h(app_tr('وارد الشهر', 'Monthly incoming')); ?></div>
+                <div style="font-size:1.4rem; font-weight:800; color:#2ecc71;"><?php echo number_format($m_in, 2); ?> EGP</div>
+            </div>
+            <div class="ai-fin-card">
+                <div style="color:#8aa0ad; font-size:.85rem;"><?php echo app_h(app_tr('منصرف الشهر', 'Monthly outgoing')); ?></div>
+                <div style="font-size:1.4rem; font-weight:800; color:#e74c3c;"><?php echo number_format($m_out, 2); ?> EGP</div>
+            </div>
+            <div class="ai-fin-card">
+                <div style="color:#8aa0ad; font-size:.85rem;"><?php echo app_h(app_tr('صافي التدفق الشهري', 'Monthly net cash flow')); ?></div>
+                <div style="font-size:1.4rem; font-weight:800; color:<?php echo $m_net >= 0 ? '#2ecc71' : '#e74c3c'; ?>;"><?php echo number_format($m_net, 2); ?> EGP</div>
+            </div>
+            <div class="ai-fin-card">
+                <div style="color:#8aa0ad; font-size:.85rem;"><?php echo app_h(app_tr('مؤشر ضغط السيولة', 'Liquidity pressure index')); ?></div>
+                <div style="font-size:1.4rem; font-weight:800; color:<?php echo $liquidity_pressure > 1.2 ? '#f39c12' : '#3498db'; ?>;"><?php echo number_format($liquidity_pressure, 2); ?></div>
+            </div>
+        </div>
+        <div style="margin-top:10px; color:#d8e7ee;">
+            <?php if(!empty($finance_alerts)): ?>
+                <ul style="margin:8px 0 0; padding-right:18px;">
+                    <?php foreach($finance_alerts as $al): ?>
+                        <li><?php echo htmlspecialchars($al); ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php else: ?>
+                <div style="color:#98d8b4;"><?php echo app_h(app_tr('الوضع المالي الحالي متوازن ولا توجد تنبيهات حرجة.', 'Current financial status is balanced and there are no critical alerts.')); ?></div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <?php if (is_array($saasFinanceSummary)): ?>
+    <div class="saas-finance-box">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+            <h3 style="margin:0; color:var(--royal-gold);"><i class="fa-solid fa-building-shield"></i> <?php echo app_h(app_tr('تحصيل اشتراكات SaaS', 'SaaS Subscription Collections')); ?></h3>
+            <a href="saas_center.php" style="background:linear-gradient(45deg, var(--royal-gold), #b8860b); color:#000; text-decoration:none; padding:10px 16px; border-radius:10px; font-weight:800;"><i class="fa-solid fa-arrow-up-right-from-square"></i> <?php echo app_h(app_tr('فتح مركز SaaS', 'Open SaaS Center')); ?></a>
+        </div>
+        <form method="get" class="saas-filter-bar">
+            <input type="text" name="saas_tenant" value="<?php echo app_h($saasTenantFilter); ?>" placeholder="<?php echo app_h(app_tr('ابحث باسم المستأجر أو slug', 'Search tenant name or slug')); ?>">
+            <select name="saas_view">
+                <option value="all" <?php echo $saasViewFilter === 'all' ? 'selected' : ''; ?>><?php echo app_h(app_tr('الكل', 'All')); ?></option>
+                <option value="invoices" <?php echo $saasViewFilter === 'invoices' ? 'selected' : ''; ?>><?php echo app_h(app_tr('فواتير فقط', 'Invoices only')); ?></option>
+                <option value="payments" <?php echo $saasViewFilter === 'payments' ? 'selected' : ''; ?>><?php echo app_h(app_tr('تحصيلات فقط', 'Payments only')); ?></option>
+            </select>
+            <select name="saas_status">
+                <option value="all" <?php echo $saasStatusFilter === 'all' ? 'selected' : ''; ?>><?php echo app_h(app_tr('كل الحالات', 'All statuses')); ?></option>
+                <option value="issued" <?php echo $saasStatusFilter === 'issued' ? 'selected' : ''; ?>><?php echo app_h(app_tr('مستحقة', 'Issued')); ?></option>
+                <option value="paid" <?php echo $saasStatusFilter === 'paid' ? 'selected' : ''; ?>><?php echo app_h(app_tr('مسددة', 'Paid')); ?></option>
+                <option value="posted" <?php echo $saasStatusFilter === 'posted' ? 'selected' : ''; ?>><?php echo app_h(app_tr('محصلة', 'Posted')); ?></option>
+                <option value="reversed" <?php echo $saasStatusFilter === 'reversed' ? 'selected' : ''; ?>><?php echo app_h(app_tr('معكوسة', 'Reversed')); ?></option>
+            </select>
+            <select name="saas_method">
+                <option value="all" <?php echo $saasMethodFilter === 'all' ? 'selected' : ''; ?>><?php echo app_h(app_tr('كل طرق السداد', 'All methods')); ?></option>
+                <option value="bank_transfer" <?php echo $saasMethodFilter === 'bank_transfer' ? 'selected' : ''; ?>><?php echo app_h(app_tr('تحويل بنكي', 'Bank transfer')); ?></option>
+                <option value="instapay" <?php echo $saasMethodFilter === 'instapay' ? 'selected' : ''; ?>><?php echo app_h(app_tr('إنستاباي', 'InstaPay')); ?></option>
+                <option value="wallet" <?php echo $saasMethodFilter === 'wallet' ? 'selected' : ''; ?>><?php echo app_h(app_tr('محفظة', 'Wallet')); ?></option>
+                <option value="cash" <?php echo $saasMethodFilter === 'cash' ? 'selected' : ''; ?>><?php echo app_h(app_tr('نقدي', 'Cash')); ?></option>
+                <option value="card" <?php echo $saasMethodFilter === 'card' ? 'selected' : ''; ?>><?php echo app_h(app_tr('بطاقة', 'Card')); ?></option>
+                <option value="check" <?php echo $saasMethodFilter === 'check' ? 'selected' : ''; ?>><?php echo app_h(app_tr('شيك', 'Check')); ?></option>
+                <option value="gateway" <?php echo $saasMethodFilter === 'gateway' ? 'selected' : ''; ?>><?php echo app_h(app_tr('بوابة دفع', 'Payment gateway')); ?></option>
+                <option value="manual" <?php echo $saasMethodFilter === 'manual' ? 'selected' : ''; ?>><?php echo app_h(app_tr('يدوي', 'Manual')); ?></option>
+            </select>
+            <button type="submit" class="saas-filter-btn primary"><?php echo app_h(app_tr('تصفية', 'Filter')); ?></button>
+            <a class="saas-filter-btn" href="?<?php echo app_h(http_build_query(array_merge($saasFilterQuery, ['saas_export' => 'csv']))); ?>"><?php echo app_h(app_tr('تصدير CSV', 'Export CSV')); ?></a>
+        </form>
+        <div class="saas-finance-grid">
+            <div class="saas-fin-card"><?php echo app_h(app_tr('المحصل المسجل', 'Posted collections')); ?><strong><?php echo number_format((float)($saasFinanceSummary['payments_posted'] ?? 0), 2); ?> EGP</strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('الفواتير المفتوحة', 'Open invoices')); ?><strong><?php echo number_format((float)($saasFinanceSummary['outstanding_amount'] ?? 0), 2); ?> EGP</strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('الفواتير المتأخرة', 'Overdue invoices')); ?><strong><?php echo (int)($saasFinanceSummary['overdue_count'] ?? 0); ?></strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('حركات معكوسة', 'Reversed entries')); ?><strong><?php echo number_format((float)($saasFinanceSummary['payments_reversed'] ?? 0), 2); ?> EGP</strong></div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!empty($saasInvoiceRows) || !empty($saasPaymentRows)): ?>
+    <div class="saas-detail-grid">
+        <div class="saas-detail-card">
+            <div class="saas-detail-head"><?php echo app_h(app_tr('آخر فواتير اشتراك SaaS', 'Latest SaaS subscription invoices')); ?></div>
+            <div class="saas-detail-body">
+                <?php foreach ($saasInvoiceRows as $row): ?>
+                <div class="saas-detail-row">
+                    <strong><?php echo app_h((string)($row['invoice_number'] ?? 'SINV')); ?> | <?php echo app_h((string)($row['tenant_name'] ?? '')); ?></strong>
+                    <small><?php echo app_h((string)($row['tenant_slug'] ?? '')); ?></small>
+                    <small><?php echo app_h((string)($row['currency_code'] ?? 'EGP')); ?> <?php echo number_format((float)($row['amount'] ?? 0), 2); ?> | <?php echo app_h(app_status_label((string)($row['status'] ?? 'issued'))); ?></small>
+                    <small><?php echo app_h(app_tr('الاستحقاق', 'Due date')); ?>: <?php echo app_h((string)($row['due_date'] ?? '-')); ?></small>
+                    <?php if (trim((string)($row['paid_at'] ?? '')) !== ''): ?>
+                    <small><?php echo app_h(app_tr('تم السداد', 'Paid at')); ?>: <?php echo app_h((string)($row['paid_at'] ?? '-')); ?><?php if (trim((string)($row['payment_ref'] ?? '')) !== ''): ?> | <?php echo app_h((string)($row['payment_ref'] ?? '')); ?><?php endif; ?></small>
+                    <?php endif; ?>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
+        <div class="saas-detail-card">
+            <div class="saas-detail-head"><?php echo app_h(app_tr('آخر حركات تحصيل SaaS', 'Latest SaaS collection entries')); ?></div>
+            <div class="saas-detail-body">
+                <?php foreach ($saasPaymentRows as $row): ?>
+                <div class="saas-detail-row">
+                    <strong><?php echo app_h((string)($row['invoice_number'] ?? 'SINV')); ?> | <?php echo app_h((string)($row['tenant_name'] ?? '')); ?></strong>
+                    <small><?php echo app_h((string)($row['tenant_slug'] ?? '')); ?></small>
+                    <small><?php echo app_h((string)($row['currency_code'] ?? 'EGP')); ?> <?php echo number_format((float)($row['amount'] ?? 0), 2); ?> | <?php echo app_h(app_status_label((string)($row['status'] ?? 'posted'))); ?></small>
+                    <small><?php echo app_h(app_tr('الطريقة', 'Method')); ?>: <?php echo app_h(function_exists('saas_payment_method_label') ? saas_payment_method_label((string)($row['payment_method'] ?? 'manual'), $isEnglish) : (string)($row['payment_method'] ?? 'manual')); ?><?php if (trim((string)($row['payment_ref'] ?? '')) !== ''): ?> | <?php echo app_h((string)($row['payment_ref'] ?? '')); ?><?php endif; ?></small>
+                    <small><?php echo app_h(app_tr('التاريخ', 'Date')); ?>: <?php echo app_h((string)($row['paid_at'] ?? '-')); ?></small>
+                    <?php if (trim((string)($row['notes'] ?? '')) !== ''): ?>
+                    <small><?php echo app_h(app_tr('ملاحظات', 'Notes')); ?>: <?php echo app_h((string)($row['notes'] ?? '')); ?></small>
+                    <?php endif; ?>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <div class="finance-hero">
+        <div class="hero-card card-rec">
+            <span class="hero-label"><?php echo app_h(app_tr('إجمالي مستحقاتنا (عملاء)', 'Total receivables (clients)')); ?></span>
+            <div class="hero-num" style="color:var(--royal-green);">
+                <?php echo number_format($total_receivables, 2); ?> <small style="font-size:1rem; font-weight:normal;">EGP</small>
+            </div>
+            <i class="fa-solid fa-hand-holding-dollar hero-icon"></i>
+        </div>
+
+        <div class="hero-card card-pay">
+            <span class="hero-label"><?php echo app_h(app_tr('إجمالي التزاماتنا (موردين)', 'Total payables (suppliers)')); ?></span>
+            <div class="hero-num" style="color:var(--royal-red);">
+                <?php echo number_format($total_payables, 2); ?> <small style="font-size:1rem; font-weight:normal;">EGP</small>
+            </div>
+            <i class="fa-solid fa-file-invoice-dollar hero-icon"></i>
+        </div>
+
+        <div class="hero-card card-emp">
+            <span class="hero-label"><?php echo app_h(app_tr('رواتب مستحقة (بذمة الشركة)', 'Due salaries (company liability)')); ?></span>
+            <div class="hero-num" style="color:var(--royal-blue);">
+                <?php echo number_format($total_due_salaries, 2); ?> <small style="font-size:1rem; font-weight:normal;">EGP</small>
+            </div>
+            <div style="margin-top: 5px; font-size: 0.85rem; color: #888;">
+                <?php echo app_h(app_tr('رصيد السلف القائم:', 'Outstanding advances balance:')); ?> <span style="color:#f1c40f; font-weight:bold;"><?php echo number_format($total_loans_given); ?> EGP</span>
+            </div>
+            <i class="fa-solid fa-users-gear hero-icon"></i>
+        </div>
+
+        <div class="hero-card" style="border-right:4px solid #f1c40f;">
+            <span class="hero-label"><?php echo app_h(app_tr('صافي ربحية العمليات', 'Net operations profitability')); ?></span>
+            <div class="hero-num" style="color:<?php echo $jobs_net_profit_total >= 0 ? '#2ecc71' : '#e74c3c'; ?>;">
+                <?php echo number_format($jobs_net_profit_total, 2); ?> <small style="font-size:1rem; font-weight:normal;">EGP</small>
+            </div>
+            <div style="margin-top: 5px; font-size: 0.82rem; color: #9a9a9a;">
+                <?php echo app_h(app_tr('إيراد العمليات', 'Operations revenue')); ?>: <?php echo number_format($jobs_revenue_total, 2); ?> |
+                <?php echo app_h(app_tr('تكلفة الخامات', 'Material cost')); ?>: <?php echo number_format($jobs_material_cost_total, 2); ?> |
+                <?php echo app_h(app_tr('تكلفة الخدمات', 'Service cost')); ?>: <?php echo number_format($jobs_service_cost_total, 2); ?>
+            </div>
+            <i class="fa-solid fa-chart-line hero-icon"></i>
+        </div>
+    </div>
+
+    <div class="tax-settlement-box">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+            <h3 style="margin:0; color:#ffb36b;"><i class="fa-solid fa-landmark"></i> <?php echo app_h(app_tr('تقرير سداد الضرائب', 'Tax settlement report')); ?></h3>
+            <a href="finance.php?def_type=out&def_cat=tax" style="background:linear-gradient(45deg, var(--royal-gold), #b8860b); color:#000; text-decoration:none; padding:10px 16px; border-radius:10px; font-weight:800;"><i class="fa-solid fa-plus"></i> <?php echo app_h(app_tr('إضافة سند ضريبة', 'Add tax voucher')); ?></a>
+        </div>
+        <div class="saas-finance-grid">
+            <div class="saas-fin-card"><?php echo app_h(app_tr('إجمالي سداد الضرائب', 'Total tax settlements')); ?><strong><?php echo number_format($taxSettlementTotal, 2); ?> EGP</strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('عدد سندات الضرائب', 'Tax voucher count')); ?><strong><?php echo number_format($taxSettlementVoucherCount); ?></strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('القوانين الضريبية المستخدمة', 'Used tax laws')); ?><strong><?php echo number_format($taxSettlementLawCount); ?></strong></div>
+        </div>
+
+        <div class="tax-settlement-table-wrap">
+            <table class="tax-settlement-table">
+                <thead>
+                    <tr>
+                        <th><?php echo app_h(app_tr('القانون الضريبي', 'Tax law')); ?></th>
+                        <th><?php echo app_h(app_tr('عدد السندات', 'Voucher count')); ?></th>
+                        <th><?php echo app_h(app_tr('إجمالي السداد', 'Total paid')); ?></th>
+                        <th><?php echo app_h(app_tr('آخر تاريخ سداد', 'Last payment date')); ?></th>
+                        <th><?php echo app_h(app_tr('آخر سند', 'Latest voucher')); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (!empty($taxSettlementRows)): ?>
+                        <?php foreach ($taxSettlementRows as $taxRow): ?>
+                            <tr>
+                                <td>
+                                    <span class="tax-badge">
+                                        <i class="fa-solid fa-file-invoice-dollar"></i>
+                                        <?php echo app_h((string)$taxRow['tax_law_name']); ?>
+                                    </span>
+                                    <?php if ((string)$taxRow['tax_law_key'] !== ''): ?>
+                                        <div style="margin-top:6px; color:#8d98a3; font-size:.8rem;"><?php echo app_h((string)$taxRow['tax_law_key']); ?></div>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo number_format((int)$taxRow['voucher_count']); ?></td>
+                                <td><?php echo number_format((float)$taxRow['total_amount'], 2); ?> EGP</td>
+                                <td><?php echo app_h((string)($taxRow['last_payment_date'] ?: '-')); ?></td>
+                                <td>
+                                    <?php if ((int)$taxRow['last_voucher_id'] > 0): ?>
+                                        <a href="print_finance_voucher.php?id=<?php echo (int)$taxRow['last_voucher_id']; ?>" target="_blank" style="color:var(--royal-gold); text-decoration:none; font-weight:700;">
+                                            #<?php echo (int)$taxRow['last_voucher_id']; ?>
+                                        </a>
+                                    <?php else: ?>
+                                        -
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="5" style="text-align:center; color:#94a0ab; padding:24px;">
+                                <?php echo app_h(app_tr('لا توجد سندات سداد ضرائب مسجلة حتى الآن.', 'No tax settlement vouchers have been recorded yet.')); ?>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="tax-settlement-box" style="border-color:rgba(46, 204, 113, 0.22); background:linear-gradient(135deg, rgba(46,204,113,0.08), rgba(52,152,219,0.08));">
+        <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center;">
+            <h3 style="margin:0; color:#9ef0ba;"><i class="fa-solid fa-wallet"></i> <?php echo app_h(app_tr('الأرصدة الدائنة والفائض غير المخصص', 'Customer credits and unallocated receipt excess')); ?></h3>
+        </div>
+        <?php if ($creditReallocateMsg !== ''): ?>
+            <div class="alert alert-success" style="margin-top:12px;"><?php echo app_h($creditReallocateMsg); ?></div>
+        <?php endif; ?>
+        <?php if ($creditReallocateErr !== ''): ?>
+            <div class="alert alert-danger" style="margin-top:12px;"><?php echo app_h($creditReallocateErr); ?></div>
+        <?php endif; ?>
+        <?php if (!$clientNormalizationAllowed): ?>
+            <div class="alert alert-warning" style="margin-top:12px;">
+                <?php echo app_h(app_tr('حماية الإنتاج مفعلة: إعادة بناء تسويات العملاء جماعيًا معطلة على هذه البيئة. أي تصحيح يتم على مستوى العميل أو السند الفردي فقط.', 'Production safeguard enabled: bulk client allocation normalization is disabled on this environment. Any correction should be done at the individual client or receipt level only.')); ?>
+            </div>
+        <?php endif; ?>
+        <div class="saas-finance-grid">
+            <div class="saas-fin-card"><?php echo app_h(app_tr('إجمالي الأرصدة الدائنة للعملاء', 'Total customer credits')); ?><strong><?php echo number_format((float)($creditWatch['client_credit_total'] ?? 0), 2); ?> EGP</strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('عدد العملاء الدائنين', 'Customers with credit')); ?><strong><?php echo number_format((int)($creditWatch['client_credit_count'] ?? 0)); ?></strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('إجمالي فائض سندات القبض', 'Total unallocated receipt excess')); ?><strong><?php echo number_format((float)($creditWatch['receipt_credit_total'] ?? 0), 2); ?> EGP</strong></div>
+            <div class="saas-fin-card"><?php echo app_h(app_tr('عدد السندات ذات الفائض', 'Receipts with excess')); ?><strong><?php echo number_format((int)($creditWatch['receipt_credit_count'] ?? 0)); ?></strong></div>
+        </div>
+
+        <div class="section-container" style="margin-top:16px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+            <div class="list-card">
+                <div class="list-header">
+                    <h3 class="list-title"><i class="fa-solid fa-user-plus"></i> <?php echo app_h(app_tr('العملاء ذوو الرصيد الدائن', 'Customers with credit balance')); ?></h3>
+                    <span style="background:var(--royal-gold); color:#000; padding:2px 10px; border-radius:20px; font-weight:bold; font-size:0.8rem;"><?php echo number_format((int)($creditWatch['client_credit_count'] ?? 0)); ?></span>
+                </div>
+                <div class="list-body">
+                    <?php if (!empty($creditWatch['client_credits'])): ?>
+                        <?php foreach ($creditWatch['client_credits'] as $creditRow): ?>
+                            <div class="data-row">
+                                <div>
+                                    <div class="entity-name"><?php echo app_h((string)($creditRow['client_name'] ?? '')); ?></div>
+                                    <div class="entity-meta">
+                                        <span class="confirm-badge" style="background:rgba(46,204,113,.12); color:#9ef0ba; border-color:rgba(46,204,113,.22);">
+                                            <i class="fa-solid fa-circle-dollar-to-slot"></i>
+                                            <?php echo app_h(app_tr('رصيد دائن', 'Credit balance')); ?>: <?php echo number_format((float)($creditRow['credit_amount'] ?? 0), 2); ?> EGP
+                                        </span>
+                                        <?php if (trim((string)($creditRow['phone'] ?? '')) !== ''): ?>
+                                            <span class="pending-badge"><i class="fa-solid fa-phone"></i> <?php echo app_h((string)$creditRow['phone']); ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="data-row" style="justify-content:center; color:#94a0ab;">
+                            <?php echo app_h(app_tr('لا توجد أرصدة دائنة للعملاء حاليًا.', 'There are no customer credit balances at the moment.')); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <div class="list-card">
+                <div class="list-header">
+                    <h3 class="list-title"><i class="fa-solid fa-file-circle-plus"></i> <?php echo app_h(app_tr('سندات القبض ذات الفائض', 'Receipts with unallocated excess')); ?></h3>
+                    <span style="background:var(--royal-gold); color:#000; padding:2px 10px; border-radius:20px; font-weight:bold; font-size:0.8rem;"><?php echo number_format((int)($creditWatch['receipt_credit_count'] ?? 0)); ?></span>
+                </div>
+                <div class="list-body">
+                    <?php if (!empty($creditWatch['receipt_credits'])): ?>
+                        <?php foreach ($creditWatch['receipt_credits'] as $receiptRow): ?>
+                            <div class="data-row">
+                                <div>
+                                    <div class="entity-name">
+                                        #<?php echo (int)($receiptRow['receipt_id'] ?? 0); ?>
+                                        <?php if (trim((string)($receiptRow['client_name'] ?? '')) !== ''): ?>
+                                            - <?php echo app_h((string)$receiptRow['client_name']); ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="entity-meta">
+                                        <span class="pending-badge"><i class="fa-regular fa-calendar"></i> <?php echo app_h((string)($receiptRow['trans_date'] ?? '-')); ?></span>
+                                        <span class="confirm-badge" style="background:rgba(212,175,55,.12); color:#ffe69b; border-color:rgba(212,175,55,.22);">
+                                            <i class="fa-solid fa-wallet"></i>
+                                            <?php echo app_h(app_tr('فائض غير مخصص', 'Unallocated excess')); ?>: <?php echo number_format((float)($receiptRow['unallocated_amount'] ?? 0), 2); ?> EGP
+                                        </span>
+                                    </div>
+                                    <?php if (trim((string)($receiptRow['description'] ?? '')) !== ''): ?>
+                                        <div class="entity-meta" style="margin-top:6px;"><?php echo app_h((string)$receiptRow['description']); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="action-group">
+                                    <a href="finance_reports.php?credit_action=reallocate_receipt&amp;receipt_id=<?php echo (int)($receiptRow['receipt_id'] ?? 0); ?>&amp;_token=<?php echo urlencode($csrfToken); ?>" class="btn-action review-btn"><?php echo app_h(app_tr('تسوية تلقائية الآن', 'Auto-settle now')); ?></a>
+                                    <a href="finance.php?edit=<?php echo (int)($receiptRow['receipt_id'] ?? 0); ?>&focus=settlement#finance-form" class="btn-action review-btn"><?php echo app_h(app_tr('تسوية / إعادة توزيع', 'Settle / reallocate')); ?></a>
+                                    <a href="finance.php?edit=<?php echo (int)($receiptRow['receipt_id'] ?? 0); ?>" class="btn-action review-btn"><?php echo app_h(app_tr('مراجعة السند', 'Review voucher')); ?></a>
+                                    <a href="print_finance_voucher.php?id=<?php echo (int)($receiptRow['receipt_id'] ?? 0); ?>" target="_blank" class="btn-action print-btn"><?php echo app_h(app_tr('طباعة', 'Print')); ?></a>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="data-row" style="justify-content:center; color:#94a0ab;">
+                            <?php echo app_h(app_tr('لا توجد سندات قبض بها فائض غير مخصص حاليًا.', 'There are no receipts with unallocated excess right now.')); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section-container">
+        
+        <div class="list-card">
+            <div class="list-header">
+                <h3 class="list-title"><i class="fa-solid fa-users"></i> <?php echo app_h(app_tr('بوابة العملاء', 'Clients Portal')); ?></h3>
+                <span style="background:var(--royal-gold); color:#000; padding:2px 10px; border-radius:20px; font-weight:bold; font-size:0.8rem;"><?php echo $clients_list->num_rows; ?></span>
+            </div>
+            <div class="list-body">
+                <?php if($clients_list) while($c = $clients_list->fetch_assoc()): 
+                    $link = get_finance_link('client', $c['id'], $c['access_token']);
+                    $wa_msg = urlencode("مرحباً {$c['name']}،\nيرجى التكرم بمراجعة كشف الحساب والمصادقة عليه عبر الرابط:\n$link");
+                ?>
+                <div class="data-row">
+                    <div>
+                        <div class="entity-name"><?php echo $c['name']; ?></div>
+                        <div class="entity-meta">
+                            <?php if(!empty($c['last_balance_confirm'])): ?>
+                                <span class="confirm-badge"><i class="fa-solid fa-check-double"></i> صودق: <?php echo date('Y/m/d', strtotime($c['last_balance_confirm'])); ?></span>
+                            <?php else: ?>
+                                <span class="pending-badge"><i class="fa-regular fa-clock"></i> <?php echo app_h(app_tr('بانتظار المصادقة', 'Awaiting confirmation')); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="action-group">
+                        <a href="statement.php?client_id=<?php echo $c['id']; ?>" class="act-btn" title="<?php echo app_h(app_tr('كشف حساب مفصل', 'Detailed statement')); ?>"><i class="fa-solid fa-file-invoice"></i></a>
+                        <button onclick="copyToClipboard('<?php echo $link; ?>')" class="act-btn act-copy" title="<?php echo app_h(app_tr('نسخ رابط المطابقة', 'Copy confirmation link')); ?>"><i class="fa-solid fa-link"></i></button>
+                        <a href="https://wa.me/<?php echo preg_replace('/[^0-9]/', '', $c['phone']); ?>?text=<?php echo $wa_msg; ?>" target="_blank" class="act-btn act-whatsapp" title="<?php echo app_h(app_tr('إرسال واتساب', 'Send WhatsApp')); ?>"><i class="fa-brands fa-whatsapp"></i></a>
+                    </div>
+                </div>
+                <?php endwhile; ?>
+            </div>
+        </div>
+
+        <div class="list-card">
+            <div class="list-header">
+                <h3 class="list-title"><i class="fa-solid fa-truck-field"></i> <?php echo app_h(app_tr('بوابة الموردين', 'Suppliers Portal')); ?></h3>
+                <span style="background:var(--royal-gold); color:#000; padding:2px 10px; border-radius:20px; font-weight:bold; font-size:0.8rem;"><?php echo $suppliers_list->num_rows; ?></span>
+            </div>
+            <div class="list-body">
+                <?php if($suppliers_list) while($s = $suppliers_list->fetch_assoc()): 
+                    $link = get_finance_link('supplier', $s['id'], $s['access_token']);
+                    $wa_msg = urlencode("السادة شركة {$s['name']}،\nمرفق رابط المطابقة المالية:\n$link");
+                ?>
+                <div class="data-row">
+                    <div>
+                        <div class="entity-name"><?php echo $s['name']; ?></div>
+                        <div class="entity-meta">
+                            <?php if(!empty($s['last_balance_confirm'])): ?>
+                                <span class="confirm-badge"><i class="fa-solid fa-check-double"></i> صودق: <?php echo date('Y/m/d', strtotime($s['last_balance_confirm'])); ?></span>
+                            <?php else: ?>
+                                <span class="pending-badge"><i class="fa-regular fa-clock"></i> <?php echo app_h(app_tr('بانتظار المصادقة', 'Awaiting confirmation')); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="action-group">
+                        <a href="statement_supplier.php?supplier_id=<?php echo $s['id']; ?>" class="act-btn" title="<?php echo app_h(app_tr('كشف حساب مفصل', 'Detailed statement')); ?>"><i class="fa-solid fa-file-invoice"></i></a>
+                        <button onclick="copyToClipboard('<?php echo $link; ?>')" class="act-btn act-copy" title="<?php echo app_h(app_tr('نسخ رابط المطابقة', 'Copy confirmation link')); ?>"><i class="fa-solid fa-link"></i></button>
+                        <a href="https://wa.me/<?php echo preg_replace('/[^0-9]/', '', $s['phone']); ?>?text=<?php echo $wa_msg; ?>" target="_blank" class="act-btn act-whatsapp" title="<?php echo app_h(app_tr('إرسال واتساب', 'Send WhatsApp')); ?>"><i class="fa-brands fa-whatsapp"></i></a>
+                    </div>
+                </div>
+                <?php endwhile; ?>
+            </div>
+        </div>
+
+        <div class="list-card">
+            <div class="list-header">
+                <h3 class="list-title"><i class="fa-solid fa-id-card-clip"></i> <?php echo app_h(app_tr('بوابة الموظفين', 'Employees Portal')); ?></h3>
+                <span style="background:var(--royal-gold); color:#000; padding:2px 10px; border-radius:20px; font-weight:bold; font-size:0.8rem;"><?php echo $employees_list->num_rows; ?></span>
+            </div>
+            <div class="list-body">
+                <?php if($employees_list) while($e = $employees_list->fetch_assoc()): 
+                    $link = get_finance_link('employee', $e['id'], $e['access_token']);
+                    $wa_msg = urlencode("مرحباً {$e['full_name']}،\nيمكنك الإطلاع على مسير الرواتب وحالة السلف الخاصة بك عبر الرابط التالي:\n$link");
+                ?>
+                <div class="data-row">
+                    <div>
+                        <div class="entity-name"><?php echo $e['full_name']; ?></div>
+                        <div class="entity-meta">
+                            <?php if(!empty($e['last_balance_confirm'])): ?>
+                                <span class="confirm-badge"><i class="fa-solid fa-check-double"></i> صودق: <?php echo date('Y/m/d', strtotime($e['last_balance_confirm'])); ?></span>
+                            <?php else: ?>
+                                <span class="pending-badge"><i class="fa-regular fa-clock"></i> <?php echo app_h(app_tr('لم تتم المراجعة', 'Not reviewed yet')); ?></span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="action-group">
+                        <a href="statement_employee.php?employee_id=<?php echo $e['id']; ?>" class="act-btn" title="<?php echo app_h(app_tr('سجل الرواتب والسلف', 'Payroll and loan statement')); ?>"><i class="fa-solid fa-file-invoice"></i></a>
+                        <button onclick="copyToClipboard('<?php echo $link; ?>')" class="act-btn act-copy" title="<?php echo app_h(app_tr('نسخ رابط البوابة', 'Copy portal link')); ?>"><i class="fa-solid fa-link"></i></button>
+                        <a href="https://wa.me/<?php echo preg_replace('/[^0-9]/', '', $e['phone']); ?>?text=<?php echo $wa_msg; ?>" target="_blank" class="act-btn act-whatsapp" title="<?php echo app_h(app_tr('إرسال واتساب', 'Send WhatsApp')); ?>"><i class="fa-brands fa-whatsapp"></i></a>
+                    </div>
+                </div>
+                <?php endwhile; ?>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div id="toastMsg" style="display:none; position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:var(--royal-green); color:#fff; padding:10px 25px; border-radius:30px; font-weight:bold; box-shadow:0 5px 15px rgba(0,0,0,0.3); z-index:9999;">
+    <i class="fa-solid fa-check-circle"></i> <?php echo app_h(app_tr('تم نسخ الرابط بنجاح!', 'Link copied successfully!')); ?>
+</div>
+
+<script>
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(function() {
+        let toast = document.getElementById('toastMsg');
+        toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    }, function(err) {
+        console.error('<?php echo app_h(app_tr('فشل النسخ', 'Copy failed')); ?>: ', err);
+    });
+}
+</script>
+
+<?php include 'footer.php'; ?>

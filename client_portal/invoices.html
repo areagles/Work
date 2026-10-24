@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>بوابة فواتيري | Arab Eagles</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+    
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <style>
+        :root {
+            --bg-dark: #030303;
+            --panel-bg: #0d0d0d;
+            --surface: #151515;
+            --gold: #d4af37;
+            --gold-light: #f9d976;
+            --danger: #ff4757;
+            --success: #2ed573;
+            --text-main: #ffffff;
+            --text-muted: #8a8a8a;
+        }
+
+        body {
+            background:
+                radial-gradient(circle at top right, rgba(212, 175, 55, 0.12), transparent 28%),
+                linear-gradient(180deg, #060606 0%, #0d0d0d 100%);
+            color: var(--text-main);
+            font-family: 'Cairo', sans-serif;
+            margin: 0; padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .page-container {
+            padding: 20px; padding-bottom: 110px;
+            max-width: 850px; margin: 0 auto;
+            animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Summary Card */
+        .summary-card {
+            background: linear-gradient(145deg, #121212 0%, #050505 100%);
+            border-radius: 24px; padding: 30px 25px; position: relative; overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05);
+            margin-bottom: 35px; display: flex; flex-direction: column; gap: 25px;
+        }
+        .summary-card::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent); opacity: 0.3;
+        }
+
+        .summary-header { display: flex; justify-content: space-between; align-items: center; }
+        .summary-title { color: var(--gold-light); font-weight: 800; font-size: 1.1rem; display: flex; align-items: center; gap: 10px; }
+        
+        .summary-stats {
+            display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; text-align: center;
+            background: rgba(0,0,0,0.3); padding: 20px 10px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.02);
+        }
+        .stat-box { position: relative; }
+        .stat-box:not(:last-child)::after { content: ''; position: absolute; left: 0; top: 20%; height: 60%; width: 1px; background: rgba(255,255,255,0.08); }
+        .stat-val { display: block; font-size: 1.4rem; font-weight: 900; margin-bottom: 5px; font-family: sans-serif; letter-spacing: -0.5px; }
+        .stat-lbl { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .val-total { color: #fff; }
+        .val-paid { color: var(--success); }
+        .val-due { color: var(--danger); text-shadow: 0 0 20px rgba(255, 71, 87, 0.4); }
+
+        /* Invoices List */
+        .list-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .list-title { margin: 0; font-size: 1.1rem; color: #eee; font-weight: 700; }
+        .invoices-list { display: flex; flex-direction: column; gap: 16px; }
+        
+        .invoice-item {
+            background: var(--panel-bg); border: 1px solid rgba(255,255,255,0.03); border-radius: 18px; padding: 20px;
+            transition: all 0.3s ease; position: relative; cursor: pointer; display: flex; flex-direction: column; gap: 12px;
+        }
+        .invoice-item:active { transform: scale(0.98); }
+        .invoice-item:hover { background: #181818; border-color: rgba(212, 175, 55, 0.15); box-shadow: 0 10px 20px rgba(0,0,0,0.4); transform: translateY(-2px); }
+        
+        .inv-indicator { position: absolute; right: 0; top: 20px; bottom: 20px; width: 4px; border-radius: 4px 0 0 4px; }
+        .invoice-item.unpaid .inv-indicator { background: var(--danger); box-shadow: -2px 0 10px rgba(255,71,87,0.3); }
+        .invoice-item.paid .inv-indicator { background: var(--success); box-shadow: -2px 0 10px rgba(46,213,115,0.3); }
+        .invoice-item.partially .inv-indicator { background: var(--gold); box-shadow: -2px 0 10px rgba(212,175,55,0.3); }
+
+        .inv-top { display: flex; justify-content: space-between; align-items: center; }
+        .inv-id { font-family: monospace; font-weight: 800; color: #666; font-size: 0.95rem; background: #111; padding: 4px 10px; border-radius: 6px; border: 1px solid #222; }
+        .inv-date { font-size: 0.8rem; color: #777; font-weight: 600; }
+
+        .inv-middle { display: flex; justify-content: space-between; align-items: center; }
+        .inv-title { font-size: 1.05rem; font-weight: 700; color: #fff; }
+        .inv-amount { font-size: 1.3rem; font-weight: 900; color: var(--gold-light); font-family: sans-serif; }
+
+        .inv-bottom { display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed rgba(255,255,255,0.05); padding-top: 12px; margin-top: 5px; }
+        .inv-status-badge { font-size: 0.75rem; padding: 6px 14px; border-radius: 8px; font-weight: 800; letter-spacing: 0.5px; }
+        .st-paid { background: rgba(46, 213, 115, 0.1); color: var(--success); }
+        .st-unpaid { background: rgba(255, 71, 87, 0.1); color: var(--danger); }
+        .st-part { background: rgba(212, 175, 55, 0.1); color: var(--gold); }
+
+        .inv-remain { font-size: 0.85rem; color: var(--text-muted); }
+        .inv-remain span { color: #fff; font-weight: 800; font-family: sans-serif; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 1000; display: none; justify-content: center; align-items: center; opacity: 0; transition: opacity 0.3s ease; padding: 20px; }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal-content { background: var(--panel-bg); width: 100%; max-width: 500px; border-radius: 20px; padding: 0; border: 1px solid rgba(255,255,255,0.1); transform: scale(0.95) translateY(20px); transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px rgba(0,0,0,0.5); }
+        .modal-overlay.active .modal-content { transform: scale(1) translateY(0); }
+        
+        .modal-header { display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 20px 25px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .modal-title { color: var(--gold); font-size: 1.1rem; font-weight: 800; margin: 0; display: flex; align-items: center; gap: 8px; }
+        
+        .modal-actions { display: flex; gap: 10px; }
+        .icon-btn { background: #1a1a1a; border: 1px solid #333; color: #fff; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
+        .icon-btn:hover { background: var(--gold); color: #000; border-color: var(--gold); }
+        .icon-btn.close:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+        
+        .modal-body { padding: 25px; overflow-y: auto; flex: 1; }
+        .receipt-info { display: flex; justify-content: space-between; margin-bottom: 20px; background: #0a0a0a; padding: 15px; border-radius: 12px; border: 1px dashed #333; }
+        .receipt-info div { display: flex; flex-direction: column; gap: 5px; }
+        .r-lbl { font-size: 0.75rem; color: #777; }
+        .r-val { font-size: 0.95rem; color: #fff; font-weight: bold; font-family: monospace; }
+        .r-val.highlight { color: var(--gold-light); font-size: 1.1rem; }
+
+        .items-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        .items-table th { color: var(--text-muted); padding: 10px 5px; text-align: right; font-size: 0.8rem; border-bottom: 2px solid #222; font-weight: 700; }
+        .items-table td { padding: 12px 5px; border-bottom: 1px solid #1a1a1a; font-size: 0.9rem; color: #eee; }
+        .td-num { font-family: sans-serif; text-align: center; }
+        .receipt-total { border-top: 2px dashed #333; padding-top: 15px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .receipt-total span { font-size: 1.1rem; font-weight: bold; color: #fff; }
+        .receipt-total .amount { font-size: 1.5rem; color: var(--gold); font-family: sans-serif; }
+
+        .toolbar-grid {
+            display:grid;
+            grid-template-columns:1.5fr 1fr;
+            gap:10px;
+            margin-bottom:14px;
+        }
+        .toolbar-grid input,
+        .toolbar-grid select {
+            border-radius:12px;
+            border:1px solid rgba(255,255,255,0.08);
+            background:rgba(255,255,255,0.03);
+            color:#fff;
+            padding:12px 13px;
+            font-family:inherit;
+        }
+        .toolbar-grid input:focus,
+        .toolbar-grid select:focus {
+            outline:none;
+            border-color:rgba(212,175,55,0.4);
+        }
+        .empty-state,
+        .error-state {
+            text-align:center;
+            padding:30px 20px;
+            background:var(--panel-bg);
+            border:1px dashed rgba(255,255,255,0.08);
+            border-radius:18px;
+        }
+        #loader { position: fixed; inset: 0; background: var(--bg-dark); z-index: 9999; display: flex; justify-content: center; align-items: center; flex-direction: column; gap: 15px; transition: opacity 0.4s; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+        @media print {
+            body * { visibility: hidden; }
+            .modal-overlay, .modal-content, .modal-content * { visibility: visible; }
+            .modal-content { position: absolute; left: 0; top: 0; width: 100%; box-shadow: none; border: none; background: #fff; color: #000; }
+            .modal-header, .icon-btn { display: none !important; }
+            .items-table th, .items-table td, .receipt-info div, .r-lbl, .r-val, .receipt-total span, .receipt-total .amount { color: #000 !important; }
+            .receipt-info { border-color: #000; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-header"></div>
+
+    <div id="loader">
+        <i class="fa-solid fa-circle-notch fa-spin" style="color:var(--gold); font-size:2.8rem;"></i>
+        <span style="color:var(--text-muted); font-size:0.9rem; font-weight:600;">جاري تحميل البيانات المالية</span>
+    </div>
+
+    <div class="page-container">
+        <div class="summary-card">
+            <div class="summary-header">
+                <span class="summary-title"><i class="fa-solid fa-chart-column"></i> ملخص الحساب المالي</span>
+            </div>
+            <div class="summary-stats">
+                <div class="stat-box">
+                    <span class="stat-val val-total" id="sumTotal">0</span>
+                    <span class="stat-lbl">الإجمالي</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-val val-paid" id="sumPaid">0</span>
+                    <span class="stat-lbl">المدفوع</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-val val-due" id="sumDue">0</span>
+                    <span class="stat-lbl">المستحق</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="list-header">
+            <h3 class="list-title">الفواتير والمطالبات</h3>
+            <i class="fa-solid fa-sort-amount-down" style="color:var(--gold);"></i>
+        </div>
+
+        <div class="toolbar-grid">
+            <input id="invoiceSearch" type="search" placeholder="ابحث برقم الفاتورة أو اسم العملية">
+            <select id="invoiceFilter">
+                <option value="all">كل الفواتير</option>
+                <option value="unpaid">غير مدفوعة</option>
+                <option value="partially">مدفوعة جزئياً</option>
+                <option value="paid">مسددة بالكامل</option>
+            </select>
+        </div>
+
+        <div id="invoicesList" class="invoices-list"></div>
+    </div>
+
+    <div class="modal-overlay" id="invoiceModal" onclick="closeModal(event)">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fa-solid fa-receipt"></i> تفاصيل الفاتورة</h3>
+                <div class="modal-actions">
+                    <button class="icon-btn" onclick="window.print()" title="طباعة الفاتورة"><i class="fa-solid fa-print"></i></button>
+                    <button class="icon-btn close" onclick="document.getElementById('invoiceModal').classList.remove('active')"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            
+            <div class="modal-body">
+                <div class="receipt-info">
+                    <div>
+                        <span class="r-lbl">رقم الفاتورة</span>
+                        <span class="r-val" id="modalInvId">---</span>
+                    </div>
+                    <div>
+                        <span class="r-lbl">تاريخ الإصدار</span>
+                        <span class="r-val" id="modalInvDate">---</span>
+                    </div>
+                    <div style="text-align: left;">
+                        <span class="r-lbl">المبلغ الإجمالي</span>
+                        <span class="r-val highlight" id="modalInvAmount">0.00</span>
+                    </div>
+                </div>
+
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th>البيان / الصنف</th>
+                            <th style="text-align:center;">السعر</th>
+                            <th style="text-align:center;">الكمية</th>
+                            <th style="text-align:left;">الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalItemsBody"></tbody>
+                </table>
+
+                <div class="receipt-total">
+                    <span>الإجمالي النهائي:</span>
+                    <span class="amount" id="modalTotalEnd">0.00</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let appInvoices = [];
+
+        document.addEventListener("DOMContentLoaded", loadInvoices);
+
+        function escapeText(value) {
+            return window.PortalCore.escapeHtml(value);
+        }
+
+        function classifyInvoice(inv) {
+            const amount = parseFloat(inv.total_amount || 0);
+            const paid = parseFloat(inv.paid_amount || 0);
+            const remaining = amount - paid;
+            if (remaining <= 0) {
+                return { statusClass: 'paid', badgeClass: 'st-paid', statusText: 'مُسدد', remaining };
+            }
+            if (paid > 0) {
+                return { statusClass: 'partially', badgeClass: 'st-part', statusText: 'دفعة', remaining };
+            }
+            return { statusClass: 'unpaid', badgeClass: 'st-unpaid', statusText: 'غير مدفوع', remaining };
+        }
+
+        function renderInvoices(list) {
+            const container = document.getElementById('invoicesList');
+            if (!Array.isArray(list) || !list.length) {
+            container.innerHTML = `<div class="empty-state"><i class="fa-solid fa-box-open" style="font-size:3rem; color:#333; margin-bottom:15px;"></i><p style="color:#777;">لا توجد فواتير مطابقة.</p></div>`;
+                return;
+            }
+
+            container.innerHTML = list.map(inv => {
+                const amount = parseFloat(inv.total_amount || 0);
+                const visual = classifyInvoice(inv);
+                return `
+                    <div class="invoice-item ${visual.statusClass}" onclick="openInvoiceModal('${escapeText(inv.id)}')">
+                        <div class="inv-indicator"></div>
+                        <div class="inv-top">
+                            <span class="inv-id">#${escapeText(inv.id)}</span>
+                            <span class="inv-date"><i class="fa-regular fa-clock"></i> ${escapeText(inv.date || inv.inv_date || '-')}</span>
+                        </div>
+                        <div class="inv-middle">
+                            <span class="inv-title">${escapeText(inv.job_name || 'فاتورة مبيعات / خدمات')}</span>
+                            <span class="inv-amount">${amount.toLocaleString('en-US', {minimumFractionDigits: 2})}</span>
+                        </div>
+                        <div class="inv-bottom">
+                            <span class="inv-status-badge ${visual.badgeClass}">${visual.statusText}</span>
+                            <div class="inv-remain">متبقي: <span>${visual.remaining.toLocaleString('en-US', {minimumFractionDigits: 2})}</span></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function applyInvoiceFilters() {
+            const search = document.getElementById('invoiceSearch').value.trim().toLowerCase();
+            const filter = document.getElementById('invoiceFilter').value;
+            const list = appInvoices.filter(inv => {
+                const visual = classifyInvoice(inv);
+                const idMatch = String(inv.id || '').toLowerCase().includes(search);
+                const nameMatch = String(inv.job_name || '').toLowerCase().includes(search);
+                const searchMatch = !search || idMatch || nameMatch;
+                if (!searchMatch) return false;
+                if (filter === 'all') return true;
+                return visual.statusClass === filter;
+            });
+            renderInvoices(list);
+        }
+
+        async function loadInvoices() {
+            try {
+                const result = await window.PortalCore.apiFetch('api/get_invoices.php', { cacheBust: true });
+
+                if (result.status === 'success') {
+                    appInvoices = result.data;
+                    const summary = result.summary;
+
+                    if(summary) {
+                        document.getElementById('sumTotal').innerText = summary.total_billed.toLocaleString('en-US');
+                        document.getElementById('sumPaid').innerText = summary.total_paid.toLocaleString('en-US');
+                        document.getElementById('sumDue').innerText = summary.total_due.toLocaleString('en-US');
+                    }
+
+                    applyInvoiceFilters();
+                } else {
+                    appInvoices = [];
+                    applyInvoiceFilters();
+                }
+            } catch (e) {
+                if (e && e.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                    return;
+                }
+                console.error("Fetch Error:", e);
+                document.getElementById('invoicesList').innerHTML = `<div class="error-state"><p style="color:var(--danger);">حدث خطأ في جلب البيانات.</p></div>`;
+            } finally {
+                const loader = document.getElementById('loader');
+                loader.style.opacity = '0';
+                setTimeout(() => loader.style.display = 'none', 400);
+            }
+        }
+
+        function openInvoiceModal(invId) {
+            const inv = appInvoices.find(i => i.id == invId);
+            if(!inv) return;
+
+            document.getElementById('modalInvId').innerText = inv.id || '-';
+            document.getElementById('modalInvDate').innerText = window.PortalCore.toDateOnly(inv.date || inv.inv_date || '-');
+            
+            const amountStr = parseFloat(inv.total_amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2});
+            document.getElementById('modalInvAmount').innerText = amountStr;
+            document.getElementById('modalTotalEnd').innerText = amountStr + ' EGP';
+
+            const tbody = document.getElementById('modalItemsBody');
+            tbody.innerHTML = '';
+
+            let itemsRaw = inv.items_json;
+            
+            if(itemsRaw) {
+                try {
+                    let items = typeof itemsRaw === 'string' ? JSON.parse(itemsRaw) : itemsRaw;
+                    if(typeof items === 'string') items = JSON.parse(items);
+
+                    if(Array.isArray(items) && items.length > 0) {
+                        items.forEach(item => {
+                            let itemName = item.name || item.item_name || item.item || item.description || item.desc || item.title || item.details || item['البيان'] || item['الصنف'];
+                            if (!itemName) {
+                                for (let key in item) {
+                                    let lowerKey = key.toLowerCase();
+                                    if (!['qty', 'quantity', 'count', 'price', 'unit_price', 'cost', 'total', 'subtotal', 'tax', 'id'].includes(lowerKey)) {
+                                        if (typeof item[key] === 'string' && isNaN(item[key]) && item[key].trim() !== '') {
+                                            itemName = item[key];
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            itemName = itemName || 'صنف غير محدد';
+
+                            let qty = item.qty || item.quantity || item.count || 1;
+                            let price = item.price || item.unit_price || item.cost || 0;
+                            let total = item.total || item.subtotal || (qty * price);
+                            
+                            tbody.innerHTML += `
+                                <tr>
+                                    <td style="color:#fff; font-weight:600;">${escapeText(itemName)}</td>
+                                    <td class="td-num">${parseFloat(price).toLocaleString('en-US')}</td>
+                                    <td class="td-num">${escapeText(qty)}</td>
+                                    <td class="td-num" style="color:var(--gold-light); font-weight:bold; text-align:left;">${parseFloat(total).toLocaleString('en-US')}</td>
+                                </tr>
+                            `;
+                        });
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:#888;">لم يتم إضافة أصناف مفصلة لهذه الفاتورة.</td></tr>';
+                    }
+                } catch(e) {
+                    console.error("JSON Parse Error:", e);
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:var(--danger);">خطأ في قراءة هيكل الأصناف.</td></tr>';
+                }
+            } else {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:#888;">لا توجد تفاصيل مرفقة من النظام الأساسي.</td></tr>';
+            }
+
+            const modal = document.getElementById('invoiceModal');
+            modal.style.display = 'flex';
+            setTimeout(() => modal.classList.add('active'), 10);
+        }
+
+        function closeModal(e) {
+            if(e.target.id === 'invoiceModal') {
+                const modal = document.getElementById('invoiceModal');
+                modal.classList.remove('active');
+                setTimeout(() => modal.style.display = 'none', 400);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            document.getElementById('invoiceSearch').addEventListener('input', applyInvoiceFilters);
+            document.getElementById('invoiceFilter').addEventListener('change', applyInvoiceFilters);
+        });
+    </script>
+</body>
+</html>

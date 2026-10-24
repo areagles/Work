@@ -1,0 +1,1144 @@
+<?php
+// modules/design_only.php - (Royal Design Studio V23.1 - Navigation & Details Fix)
+
+// 0. إعدادات النظام
+error_reporting(E_ALL);
+@ini_set('upload_max_filesize', '2048M');
+@ini_set('post_max_size', '2048M');
+@ini_set('max_execution_time', '3600');
+@ini_set('max_input_time', '3600');
+@ini_set('memory_limit', '2048M');
+
+$app_module_embedded = !empty($app_module_embedded);
+
+if (!isset($conn, $job) || !is_array($job) || !isset($job['id'])) {
+    http_response_code(403);
+    exit('Forbidden');
+}
+require_once __DIR__ . '/modules/job_invoice_runtime.php';
+
+// 1. الإصلاح الذاتي والتحقق
+app_ensure_job_assets_schema($conn);
+if (function_exists('app_ensure_job_stage_data_schema')) {
+    app_ensure_job_stage_data_schema($conn);
+}
+
+// التأكد من وجود Access Token لرابط العميل
+app_job_access_token($conn, $job);
+
+// 2. دوال مساعدة
+function safe_redirect($id) {
+    if (!headers_sent()) {
+        header('Location: job_details.php?id=' . (int)$id);
+        exit;
+    }
+    echo "<script>window.location.href = 'job_details.php?id=" . (int)$id . "';</script>";
+    exit;
+}
+function design_only_is_ajax_request(): bool {
+    $requestedWith = strtolower(trim((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')));
+    if ($requestedWith === 'xmlhttprequest') {
+        return true;
+    }
+    if (trim((string)($_POST['__async_form'] ?? '')) === '1') {
+        return true;
+    }
+    $accept = strtolower(trim((string)($_SERVER['HTTP_ACCEPT'] ?? '')));
+    return strpos($accept, 'application/json') !== false;
+}
+function design_only_finish_request(int $jobId, array $payload = []): void {
+    if (design_only_is_ajax_request()) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    safe_redirect($jobId);
+}
+
+function get_wa_link($phone, $text) {
+    $phone = preg_replace('/[^0-9]/', '', $phone);
+    if (strlen($phone) == 11 && substr($phone, 0, 2) == '01') { $phone = '2' . $phone; }
+    elseif (strlen($phone) == 10 && substr($phone, 0, 2) == '05') { $phone = '966' . substr($phone, 1); }
+    if (strlen($phone) < 10) return false;
+    return "https://wa.me/$phone?text=" . urlencode($text);
+}
+
+function design_extract_latest_note($notes, $label) {
+    $pattern = '/\[' . preg_quote($label, '/') . '\]:\s*(.*?)(?=\n\[|$)/su';
+    if (!preg_match_all($pattern, (string)$notes, $matches) || empty($matches[1])) {
+        return '';
+    }
+    return trim((string)end($matches[1]));
+}
+
+function design_stage_value(mysqli $conn, array $job, string $stageKey, string $fieldKey, string $fallbackLabel = '', string $default = ''): string {
+    $value = app_stage_data_get($conn, (int)($job['id'] ?? 0), $stageKey, $fieldKey, '');
+    if ($value !== '') {
+        return $value;
+    }
+    if ($fallbackLabel !== '') {
+        $legacy = design_extract_latest_note($job['notes'] ?? '', $fallbackLabel);
+        if ($legacy !== '') {
+            return $legacy;
+        }
+    }
+    return $default;
+}
+
+function design_only_count_job_files_by_stage(mysqli $conn, int $jobId, string $stage): int {
+    if ($jobId <= 0 || $stage === '') {
+        return 0;
+    }
+    $row = ['cnt' => 0];
+    $stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM job_files WHERE job_id = ? AND stage = ?");
+    if ($stmt) {
+        $stmt->bind_param('is', $jobId, $stage);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: $row;
+        $stmt->close();
+    }
+    return (int)($row['cnt'] ?? 0);
+}
+
+function design_only_proofs_count(mysqli $conn, int $jobId): int {
+    if ($jobId <= 0) {
+        return 0;
+    }
+    $row = ['cnt' => 0];
+    $stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM job_proofs WHERE job_id = ?");
+    if ($stmt) {
+        $stmt->bind_param('i', $jobId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc() ?: $row;
+        $stmt->close();
+    }
+    return (int)($row['cnt'] ?? 0);
+}
+
+function design_only_append_job_note(mysqli $conn, int $jobId, string $note): void {
+    if ($jobId <= 0 || $note === '') {
+        return;
+    }
+    $stmt = $conn->prepare("UPDATE job_orders SET notes = CONCAT(IFNULL(notes, ''), ?) WHERE id = ?");
+    if ($stmt) {
+        $stmt->bind_param('si', $note, $jobId);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
+function design_only_insert_job_file(mysqli $conn, int $jobId, string $path, string $fileType, string $stage, string $uploadedBy, string $description): bool {
+    if ($jobId <= 0 || $path === '') {
+        return false;
+    }
+    $stmt = $conn->prepare("INSERT INTO job_files (job_id, file_path, file_type, stage, uploaded_by, description) VALUES (?, ?, ?, ?, ?, ?)");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('isssss', $jobId, $path, $fileType, $stage, $uploadedBy, $description);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return (bool)$ok;
+}
+
+function design_only_sync_rollup(mysqli $conn, array $job, int $userId, string $userName): void {
+    $jobId = (int)($job['id'] ?? 0);
+    if ($jobId <= 0) {
+        return;
+    }
+    $imaginationNotes = app_stage_data_get($conn, $jobId, 'briefing', 'imagination_notes', '');
+    $handoverLink = app_stage_data_get($conn, $jobId, 'handover', 'source_link', '');
+    $briefingFiles = (string)design_only_count_job_files_by_stage($conn, $jobId, 'briefing');
+    $handoverFiles = (string)design_only_count_job_files_by_stage($conn, $jobId, 'handover');
+    $proofsCount = (string)design_only_proofs_count($conn, $jobId);
+
+    foreach (['briefing', 'design', 'client_rev', 'handover', 'accounting', 'completed'] as $stageKey) {
+        app_stage_data_set($conn, $jobId, $stageKey, 'imagination_notes', $imaginationNotes, $userId, $userName);
+        app_stage_data_set($conn, $jobId, $stageKey, 'briefing_files_count', $briefingFiles, $userId, $userName);
+        app_stage_data_set($conn, $jobId, $stageKey, 'design_proofs_count', $proofsCount, $userId, $userName);
+    }
+    foreach (['handover', 'accounting', 'completed'] as $stageKey) {
+        app_stage_data_set($conn, $jobId, $stageKey, 'source_link', $handoverLink, $userId, $userName);
+        app_stage_data_set($conn, $jobId, $stageKey, 'handover_files_count', $handoverFiles, $userId, $userName);
+    }
+}
+
+$fallbackWorkflowLabels = [
+    'briefing'   => '1. التجهيز',
+    'design'     => '2. التصميم',
+    'client_rev' => '3. المراجعة',
+    'handover'   => '4. التسليم',
+    'accounting' => '5. الحسابات',
+    'completed'  => '6. الأرشيف',
+];
+$workflow = app_operation_workflow($conn, 'design_only', $fallbackWorkflowLabels);
+$allowed_stage_keys = array_keys($workflow);
+$first_stage = (string)array_key_first($workflow);
+if ($first_stage === '') {
+    $first_stage = 'briefing';
+}
+$curr = app_workflow_current_stage($workflow, (string)($job['current_stage'] ?? ''), $first_stage);
+$current_imagination_notes = design_stage_value($conn, $job, 'briefing', 'imagination_notes', 'ملاحظات التجهيز');
+$current_handover_link = design_stage_value($conn, $job, 'handover', 'source_link', '', '');
+$current_stage_outputs = app_stage_output_stage_lines($conn, (int)$job['id'], 'design_only', $curr);
+
+// 3. معالجة الطلبات
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    if (!app_verify_csrf($_POST['_csrf_token'] ?? '')) {
+        http_response_code(403);
+        exit('Invalid CSRF token');
+    }
+
+    $user_name = $_SESSION['name'] ?? 'Creative';
+
+    // === أدوات التحكم ===
+    
+    // إضافة تعليق داخلي
+    if (isset($_POST['add_internal_comment'])) {
+        if(!empty($_POST['comment_text'])) {
+            $timestamp = date('Y-m-d H:i');
+            $new_note = "\n[تعليق داخلي $user_name ($timestamp)]: " . trim((string)$_POST['comment_text']);
+            design_only_append_job_note($conn, (int)$job['id'], $new_note);
+        }
+        safe_redirect($job['id']);
+    }
+
+    // التمرير الجبري
+    if (isset($_POST['force_stage_change']) && app_user_can('jobs.manage_all')) {
+        $target_stage = trim((string)($_POST['target_stage'] ?? ''));
+        if (in_array($target_stage, $allowed_stage_keys, true)) {
+            app_update_job_stage($conn, (int)$job['id'], $target_stage);
+        }
+        safe_redirect($job['id']);
+    }
+
+    // حذف بروفة تصميم
+    if (isset($_POST['delete_proof'])) {
+        $pid = intval($_POST['delete_proof']);
+        $p = null;
+        $stmtProof = $conn->prepare("SELECT file_path FROM job_proofs WHERE id = ? AND job_id = ? LIMIT 1");
+        if ($stmtProof) {
+            $jobIdInt = (int)$job['id'];
+            $stmtProof->bind_param('ii', $pid, $jobIdInt);
+            $stmtProof->execute();
+            $p = $stmtProof->get_result()->fetch_assoc();
+            $stmtProof->close();
+        }
+        if ($p) {
+            app_safe_unlink((string)($p['file_path'] ?? ''), __DIR__ . '/uploads');
+        }
+        $stmtDelProof = $conn->prepare("DELETE FROM job_proofs WHERE id = ? AND job_id = ?");
+        if ($stmtDelProof) {
+            $jobIdInt = (int)$job['id'];
+            $stmtDelProof->bind_param('ii', $pid, $jobIdInt);
+            $stmtDelProof->execute();
+            $stmtDelProof->close();
+        }
+        design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        design_only_finish_request((int)$job['id'], [
+            'ok' => true,
+            'message' => 'تم حذف التصميم بنجاح.',
+            'reload' => true,
+            'redirect' => 'job_details.php?id=' . (int)$job['id'],
+        ]);
+    }
+
+    // A. التجهيز
+    if (isset($_POST['save_brief']) || isset($_POST['upload_brief_files'])) {
+        $briefUploadedCount = 0;
+        $briefErrors = [];
+        if (!empty($_POST['imagination_notes'])) {
+            design_only_append_job_note($conn, (int)$job['id'], "\n[ملاحظات التجهيز]: " . trim((string)$_POST['imagination_notes']));
+        }
+        app_stage_data_set($conn, (int)$job['id'], 'briefing', 'imagination_notes', (string)($_POST['imagination_notes'] ?? ''), (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        if (!empty($_FILES['help_files']['name'][0])) {
+            foreach ($_FILES['help_files']['name'] as $i => $name) {
+                if ($_FILES['help_files']['error'][$i] == 0) {
+                    $file_desc = !empty($_POST['help_desc'][$i]) ? $conn->real_escape_string($_POST['help_desc'][$i]) : 'ملف مساعد';
+                    $stored = app_store_uploaded_file([
+                        'name' => $_FILES['help_files']['name'][$i] ?? '',
+                        'type' => $_FILES['help_files']['type'][$i] ?? '',
+                        'tmp_name' => $_FILES['help_files']['tmp_name'][$i] ?? '',
+                        'error' => $_FILES['help_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+                        'size' => $_FILES['help_files']['size'][$i] ?? 0,
+                    ], [
+                        'dir' => 'uploads/briefs',
+                        'prefix' => 'help_',
+                        'max_size' => 2048 * 1024 * 1024,
+                    ]);
+                    if (!empty($stored['ok'])) {
+                        $target = (string)$stored['path'];
+                        design_only_insert_job_file($conn, (int)$job['id'], $target, 'helper', 'briefing', (string)$user_name, (string)$file_desc);
+                        $briefUploadedCount++;
+                    } else {
+                        $briefErrors[] = (string)($stored['error'] ?? 'Upload failed.');
+                    }
+                } elseif (($_FILES['help_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                    $briefErrors[] = app_upload_error_message((int)($_FILES['help_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE));
+                }
+            }
+        }
+
+        if (isset($_POST['upload_brief_files'])) {
+            design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+            design_only_finish_request((int)$job['id'], [
+                'ok' => ($briefUploadedCount > 0 || empty($briefErrors)),
+                'message' => $briefUploadedCount > 0 ? 'تم رفع الملفات بنجاح.' : 'تم حفظ التجهيز بنجاح.',
+                'error' => ($briefUploadedCount <= 0 && !empty($briefErrors)) ? trim(implode(' | ', array_filter($briefErrors))) : '',
+                'reload' => true,
+                'redirect' => 'job_details.php?id=' . (int)$job['id'],
+            ]);
+        }
+
+        design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        app_update_job_stage($conn, (int)$job['id'], 'design');
+        design_only_finish_request((int)$job['id'], [
+            'ok' => true,
+            'message' => 'تم حفظ التجهيز والانتقال إلى التصميم.',
+            'reload' => true,
+            'redirect' => 'job_details.php?id=' . (int)$job['id'],
+        ]);
+    }
+
+    // B. رفع التصاميم
+    if (isset($_POST['upload_designs_only']) || isset($_POST['send_to_review'])) {
+        $designUploadedCount = 0;
+        $designErrors = [];
+        if (!empty($_FILES['design_files']['name'])) {
+            foreach ($_FILES['design_files']['name'] as $idx => $name) {
+                if (!empty($name) && $_FILES['design_files']['error'][$idx] == 0) {
+                    $desc = "تصميم بند #" . ($idx + 1);
+                    $stored = app_store_uploaded_file([
+                        'name' => $_FILES['design_files']['name'][$idx] ?? '',
+                        'type' => $_FILES['design_files']['type'][$idx] ?? '',
+                        'tmp_name' => $_FILES['design_files']['tmp_name'][$idx] ?? '',
+                        'error' => $_FILES['design_files']['error'][$idx] ?? UPLOAD_ERR_NO_FILE,
+                        'size' => $_FILES['design_files']['size'][$idx] ?? 0,
+                    ], [
+                        'dir' => 'uploads/proofs',
+                        'prefix' => 'item_' . $idx . '_',
+                        'max_size' => 2048 * 1024 * 1024,
+                    ]);
+                    if (!empty($stored['ok'])) {
+                        $target = (string)$stored['path'];
+                        $status = 'pending';
+                        $stmtProofIns = $conn->prepare("INSERT INTO job_proofs (job_id, file_path, description, status, item_index) VALUES (?, ?, ?, ?, ?)");
+                        if ($stmtProofIns) {
+                            $jobIdInt = (int)$job['id'];
+                            $idxInt = (int)$idx;
+                            $stmtProofIns->bind_param('isssi', $jobIdInt, $target, $desc, $status, $idxInt);
+                            $stmtProofIns->execute();
+                            $stmtProofIns->close();
+                        }
+                        $designUploadedCount++;
+                    } else {
+                        $designErrors[] = (string)($stored['error'] ?? ('فشل رفع الملف: ' . $name));
+                    }
+                } elseif (!empty($name) && (int)($_FILES['design_files']['error'][$idx] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                    $designErrors[] = app_upload_error_message((int)($_FILES['design_files']['error'][$idx] ?? UPLOAD_ERR_NO_FILE));
+                }
+            }
+        }
+
+        if (isset($_POST['send_to_review'])) {
+            $proofsCount = design_only_proofs_count($conn, (int)$job['id']);
+            if (($proofsCount + $designUploadedCount) <= 0) {
+                design_only_finish_request((int)$job['id'], [
+                    'ok' => false,
+                    'error' => 'لا يمكن الإرسال للمراجعة بدون رفع تصميم واحد على الأقل.',
+                    'reload' => false,
+                    'redirect' => 'job_details.php?id=' . (int)$job['id'],
+                ]);
+            }
+            app_update_job_stage($conn, (int)$job['id'], 'client_rev');
+        }
+        design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        if (!isset($_POST['send_to_review']) && $designUploadedCount <= 0 && !empty($designErrors)) {
+            design_only_finish_request((int)$job['id'], [
+                'ok' => false,
+                'error' => trim(implode(' | ', array_filter($designErrors))),
+                'reload' => false,
+                'redirect' => 'job_details.php?id=' . (int)$job['id'],
+            ]);
+        }
+        
+        design_only_finish_request((int)$job['id'], [
+            'ok' => true,
+            'message' => isset($_POST['send_to_review']) ? 'تم رفع التصاميم وإرسالها للمراجعة.' : 'تم حفظ ورفع التصاميم بنجاح.',
+            'reload' => true,
+            'redirect' => 'job_details.php?id=' . (int)$job['id'],
+        ]);
+    }
+
+    // C. المراجعة والاعتماد
+    if (isset($_POST['finalize_review'])) {
+        app_update_job_stage($conn, (int)$job['id'], 'handover');
+        safe_redirect($job['id']);
+    }
+
+    if (isset($_POST['manual_rollback'])) {
+        $reason = $conn->real_escape_string($_POST['return_reason']);
+        $note = "\n[تراجع للتعديل]: $reason";
+        app_update_job_stage_with_note($conn, (int)$job['id'], 'design', $note);
+        safe_redirect($job['id']);
+    }
+
+    // D. التسليم
+    if (isset($_POST['upload_handover_files'])) {
+        $link = $conn->real_escape_string($_POST['source_link']);
+        $handoverUploadedCount = 0;
+        $handoverErrors = [];
+        app_stage_data_set($conn, (int)$job['id'], 'handover', 'source_link', (string)($_POST['source_link'] ?? ''), (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        if($link) {
+            design_only_insert_job_file($conn, (int)$job['id'], (string)$_POST['source_link'], 'link', 'handover', (string)$user_name, 'رابط خارجي');
+        }
+        if (!empty($_FILES['source_files']['name'][0])) {
+            foreach ($_FILES['source_files']['name'] as $i => $name) {
+                if ($_FILES['source_files']['error'][$i] == 0) {
+                    $stored = app_store_uploaded_file([
+                        'name' => $_FILES['source_files']['name'][$i] ?? '',
+                        'type' => $_FILES['source_files']['type'][$i] ?? '',
+                        'tmp_name' => $_FILES['source_files']['tmp_name'][$i] ?? '',
+                        'error' => $_FILES['source_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+                        'size' => $_FILES['source_files']['size'][$i] ?? 0,
+                    ], [
+                        'dir' => 'uploads/source',
+                        'prefix' => 'src_',
+                        'max_size' => 2048 * 1024 * 1024,
+                    ]);
+                    if (!empty($stored['ok'])) {
+                        $target = (string)$stored['path'];
+                        design_only_insert_job_file($conn, (int)$job['id'], $target, 'source', 'handover', (string)$user_name, 'ملف مصدر');
+                        $handoverUploadedCount++;
+                    } else {
+                        $handoverErrors[] = (string)($stored['error'] ?? ('فشل رفع الملف: ' . $name));
+                    }
+                } elseif (($_FILES['source_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+                    $handoverErrors[] = app_upload_error_message((int)($_FILES['source_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE));
+                }
+            }
+        }
+        if ($link === '' && $handoverUploadedCount <= 0) {
+            design_only_finish_request((int)$job['id'], [
+                'ok' => false,
+                'error' => !empty($handoverErrors) ? trim(implode(' | ', array_filter($handoverErrors))) : 'أدخل رابط التسليم أو ارفع ملفًا واحدًا على الأقل.',
+                'reload' => false,
+                'redirect' => 'job_details.php?id=' . (int)$job['id'],
+            ]);
+        }
+        design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        design_only_finish_request((int)$job['id'], [
+            'ok' => true,
+            'message' => 'تم حفظ ملفات التسليم بنجاح.',
+            'reload' => true,
+            'redirect' => 'job_details.php?id=' . (int)$job['id'],
+        ]);
+    }
+
+    if (isset($_POST['finish_handover']) || isset($_POST['finish_handover_no_invoice'])) {
+        $handover_ready = false;
+        $handover_ready = design_only_count_job_files_by_stage($conn, (int)$job['id'], 'handover') > 0;
+        if (!$handover_ready) {
+            $_SESSION['flash_error'] = 'يجب رفع ملف تسليم واحد على الأقل أو إضافة رابط تسليم قبل التحويل للحسابات.';
+            safe_redirect($job['id']);
+        }
+        if (isset($_POST['finish_handover'])) {
+            job_create_sales_invoice_from_job($conn, $job, (string)($_SESSION['name'] ?? 'System'));
+        } else {
+            job_append_accounting_note($conn, (int)$job['id'], 'تم تحويل العملية للحسابات بدون إنشاء فاتورة تلقائية. سيتم الاعتماد على فاتورة موجودة أو مستوردة لاحقاً.');
+        }
+        app_update_job_stage($conn, (int)$job['id'], 'accounting');
+        safe_redirect($job['id']);
+    }
+
+    // خدمات
+    if (isset($_POST['archive_job'])) {
+        app_update_job_stage($conn, (int)$job['id'], 'completed', 'completed');
+        safe_redirect($job['id']);
+    }
+    if (isset($_POST['reopen_job'])) {
+        app_update_job_stage($conn, (int)$job['id'], $first_stage, 'processing');
+        safe_redirect($job['id']);
+    }
+    if (isset($_POST['delete_file'])) {
+        $fid = intval($_POST['file_id']);
+        $f = null;
+        $stmtFile = $conn->prepare("SELECT file_path FROM job_files WHERE id = ? AND job_id = ? LIMIT 1");
+        if ($stmtFile) {
+            $jobIdInt = (int)$job['id'];
+            $stmtFile->bind_param('ii', $fid, $jobIdInt);
+            $stmtFile->execute();
+            $f = $stmtFile->get_result()->fetch_assoc();
+            $stmtFile->close();
+        }
+        if ($f) {
+            app_safe_unlink((string)($f['file_path'] ?? ''), __DIR__ . '/uploads');
+        }
+        $stmtDelFile = $conn->prepare("DELETE FROM job_files WHERE id = ? AND job_id = ?");
+        if ($stmtDelFile) {
+            $jobIdInt = (int)$job['id'];
+            $stmtDelFile->bind_param('ii', $fid, $jobIdInt);
+            $stmtDelFile->execute();
+            $stmtDelFile->close();
+        }
+        design_only_sync_rollup($conn, $job, (int)($_SESSION['user_id'] ?? 0), (string)$user_name);
+        safe_redirect($job['id']);
+    }
+}
+
+// 4. تهيئة الواجهة
+$curr = app_workflow_current_stage($workflow, (string)($job['current_stage'] ?? ''), $first_stage);
+$prev_stage = $workflow[$curr]['prev'] ?? null;
+$next_stage = $workflow[$curr]['next'] ?? null;
+$curr_label = $workflow[$curr]['label'] ?? '';
+$prev_label = ($prev_stage && isset($workflow[$prev_stage])) ? $workflow[$prev_stage]['label'] : 'لا يوجد';
+$next_label = ($next_stage && isset($workflow[$next_stage])) ? $workflow[$next_stage]['label'] : 'لا يوجد';
+$is_financial = app_user_can_any(['finance.view', 'invoices.view']);
+$can_force_stage = app_user_can('jobs.manage_all');
+
+$items_count = (intval($job['quantity']) > 0) ? intval($job['quantity']) : 1;
+$job_note_entries = array_slice(app_parse_job_notes((string)($job['notes'] ?? '')), 0, 12);
+
+// جلب البروفات
+$latest_proofs = [];
+for($i=0; $i<$items_count; $i++) {
+    $latest_proofs[$i] = null;
+    $stmtProofView = $conn->prepare("SELECT * FROM job_proofs WHERE job_id = ? AND item_index = ? ORDER BY id DESC LIMIT 1");
+    if ($stmtProofView) {
+        $jobIdInt = (int)$job['id'];
+        $idxInt = (int)$i;
+        $stmtProofView->bind_param('ii', $jobIdInt, $idxInt);
+        $stmtProofView->execute();
+        $latest_proofs[$i] = $stmtProofView->get_result()->fetch_assoc() ?: null;
+        $stmtProofView->close();
+    }
+}
+
+$all_files = [];
+$stmtFilesView = $conn->prepare("SELECT * FROM job_files WHERE job_id = ? ORDER BY id DESC");
+if ($stmtFilesView) {
+    $jobIdInt = (int)$job['id'];
+    $stmtFilesView->bind_param('i', $jobIdInt);
+    $stmtFilesView->execute();
+    $resFilesView = $stmtFilesView->get_result();
+    while ($resFilesView && ($fileRow = $resFilesView->fetch_assoc())) {
+        $all_files[] = $fileRow;
+    }
+    $stmtFilesView->close();
+}
+?>
+
+<style>
+    :root { --d-gold: #d4af37; --d-bg: #121212; --d-card: #1e1e1e; --d-green: #2ecc71; --d-red: #c0392b; }
+    
+    .split-layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+    .sidebar { width: 320px; flex-shrink: 0; background: #151515; border: 1px solid #333; border-radius: 12px; padding: 20px; position: sticky; top: calc(var(--nav-total-height, 70px) + 20px); max-height: calc(100vh - var(--nav-total-height, 70px) - 40px); overflow-y: auto; }
+    .main-content { flex: 1; min-width: 0; }
+    
+    @media (max-width: 900px) { 
+        .split-layout { flex-direction: column; }
+        .sidebar { width: 100%; order: 2; position: static; max-height: none; } 
+        .main-content { width: 100%; order: 1; margin-bottom: 20px; } 
+    }
+
+    .info-block { margin-bottom: 20px; border-bottom: 1px dashed #333; padding-bottom: 15px; }
+    .info-label { color: var(--d-gold); font-size: 0.85rem; font-weight: bold; margin-bottom: 5px; display: block; }
+    .info-value { color: #ddd; font-size: 0.9rem; white-space: pre-wrap; line-height: 1.5; }
+    
+    .file-item { display: flex; align-items: center; gap: 10px; background: #0a0a0a; padding: 8px; margin-bottom: 5px; border-radius: 6px; border: 1px solid #333; }
+    .file-link { flex: 1; color: #fff; text-decoration: none; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .delete-btn { background:none; border:none; color:var(--d-red); cursor:pointer; font-size:1.1rem; padding: 0 5px; }
+
+    .comments-box { background: #000; padding: 10px; border-radius: 6px; max-height: 200px; overflow-y: auto; font-size: 0.85rem; border: 1px solid #333; margin-bottom: 10px; }
+    .comment-input { width: 100%; background: #222; border: 1px solid #444; padding: 8px; color: #fff; border-radius: 4px; }
+    
+    .stage-header { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px; margin-bottom: 20px; border-bottom: 1px solid #333; -webkit-overflow-scrolling: touch; }
+    .stage-summary { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:20px; }
+    .stage-summary-item { background:#151515; border:1px solid #333; border-radius:10px; padding:14px; }
+    .stage-summary-label { display:block; color:#8f8f8f; font-size:0.8rem; margin-bottom:6px; }
+    .stage-summary-value { color:#f2f2f2; font-size:1rem; font-weight:700; }
+    .stage-output-panel { background:#151515; border:1px solid #333; border-radius:12px; padding:14px; margin-bottom:20px; }
+    .stage-output-panel-title { color:var(--d-gold); font-weight:700; margin-bottom:10px; }
+    .stage-output-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
+    .stage-output-box { background:#0d0d0d; border:1px solid #292929; border-radius:10px; padding:12px; }
+    .stage-output-box .label { color:#8f8f8f; font-size:.78rem; margin-bottom:6px; }
+    .stage-output-box .value { color:#f4f4f4; font-weight:700; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
+    .step-badge { background: #333; color: #777; padding: 5px 15px; border-radius: 20px; white-space: nowrap; font-size: 0.85rem; transition:0.3s; }
+    .step-badge.active { background: var(--d-gold); color: #000; font-weight: bold; transform: scale(1.05); }
+    
+    .main-card { background: var(--d-card); padding: 25px; border-radius: 12px; border: 1px solid #333; margin-bottom: 20px; }
+    .card-title { color: var(--d-gold); margin: 0 0 15px 0; border-bottom: 1px dashed #444; padding-bottom: 10px; font-size: 1.2rem; display: flex; justify-content: space-between; align-items: center; }
+    
+    .item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; margin-bottom: 20px; }
+    @media (max-width: 600px) { .item-grid { grid-template-columns: 1fr; } }
+
+    .item-card { background: #000; border: 1px solid #333; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; position: relative; }
+    .item-card.rejected { border-color: var(--d-red); box-shadow: 0 0 5px rgba(192, 57, 43, 0.3); }
+    .item-card.approved { border-color: var(--d-green); box-shadow: 0 0 5px rgba(46, 204, 113, 0.3); }
+    
+    .item-img { width: 100%; height: 200px; object-fit: contain; background: #111; border-bottom: 1px solid #333; }
+    .item-body { padding: 15px; flex: 1; display:flex; flex-direction:column; }
+    
+    .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-bottom:5px; align-self:flex-start; }
+    .st-pending { background: #f39c12; color: #000; }
+    .st-approved { background: var(--d-green); color: #000; }
+    .st-rejected { background: var(--d-red); color: #fff; }
+    
+    .feedback-box { background: rgba(192, 57, 43, 0.1); border-left: 3px solid var(--d-red); padding: 10px; margin-top: 10px; font-size: 0.85rem; color: #e74c3c; }
+    .feedback-info { background: rgba(52, 152, 219, 0.1); border-left: 3px solid #3498db; padding: 10px; margin-top: 10px; font-size: 0.85rem; color: #3498db; }
+
+    .btn { padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; color: #fff; font-weight: bold; width: 100%; margin-top: 10px; transition: 0.3s; }
+    .btn:active { transform: scale(0.98); }
+    .btn-gold { background: linear-gradient(45deg, var(--d-gold), #b8860b); color: #000; }
+    .btn-green { background: var(--d-green); color: #000; }
+    .btn-red { background: var(--d-red); }
+    .btn-gray { background: #444; }
+    .btn-sm { padding: 5px 10px; font-size: 0.8rem; width: auto; margin-top: 0; }
+    
+    .wa-btn { background: #25D366; color: #fff; text-decoration: none; display: inline-block; padding: 10px 20px; border-radius: 5px; margin-bottom: 15px; font-weight: bold; width: 100%; text-align: center; box-sizing: border-box; }
+    
+    .control-panel { background: #0f0f0f; border: 1px solid #333; padding: 10px; border-radius: 8px; margin-top: 20px; }
+    .control-row { display: flex; gap: 5px; margin-top: 5px; }
+    @media (max-width: 560px) {
+        .split-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-inline: 0;
+            width: 100%;
+            overflow-x: clip;
+        }
+        .main-content,
+        .sidebar {
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+            margin-inline: 0;
+        }
+        .main-content { order: 1; margin-bottom: 0; }
+        .sidebar { order: 2; position: static; max-height: none; }
+        .main-card,
+        .sidebar,
+        .stage-output-panel { padding: 12px; }
+        .sidebar {
+            padding: 0;
+            overflow: hidden;
+        }
+        .sidebar.mobile-collapsed > *:not(.sidebar-mobile-head) { display: none !important; }
+        .sidebar-mobile-head {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            background: #141414;
+            color: #f1d77f;
+            border: 1px solid #333;
+            border-radius: 10px;
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .sidebar-mobile-head::after {
+            content: "⌄";
+            font-size: 1rem;
+            transition: transform .2s ease;
+        }
+        .sidebar-mobile-head.open::after { transform: rotate(180deg); }
+        .stage-header {
+            position: static;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            background: transparent;
+            margin-inline: 0;
+            padding: 0 0 8px;
+            border-bottom: none;
+            width: 100%;
+            max-width: 100%;
+            overflow: visible;
+        }
+        .step-badge {
+            min-width: 0;
+            text-align: center;
+            padding: 8px 10px;
+            line-height: 1.35;
+            white-space: normal;
+        }
+        .step-badge.active { grid-column: 1 / -1; }
+        .stage-summary { display: none; }
+        .stage-summary-item {
+            min-width: 0;
+            padding: 10px 12px;
+        }
+        .stage-summary-label { font-size: 0.68rem; }
+        .stage-summary-value { font-size: 0.88rem; }
+        .stage-output-grid,
+        .item-grid { grid-template-columns: 1fr; }
+        .card-title { flex-direction: column; align-items: flex-start; gap: 8px; }
+        .control-row { flex-direction: column; }
+        .stage-header { gap: 6px; margin-bottom: 14px; }
+        .step-badge { padding: 6px 10px; font-size: 0.72rem; }
+        .file-item { flex-direction: column; align-items: flex-start; }
+        .file-item form,
+        .file-item .file-link { width: 100%; }
+        .item-card div[style*="display:flex"],
+        .main-card form div[style*="display:flex"] { flex-direction: column; align-items: stretch !important; }
+        .main-card input[type="file"],
+        .main-card input[type="text"],
+        .main-card textarea,
+        .main-card button,
+        .main-card select { width: 100% !important; max-width: 100%; }
+        .main-card input[type="text"],
+        .main-card textarea,
+        .main-card select { padding: 10px; font-size: 0.9rem; }
+    }
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    if (!window.matchMedia('(max-width: 560px)').matches) return;
+    document.querySelectorAll('.sidebar').forEach(function (sidebar) {
+        if (sidebar.querySelector('.sidebar-mobile-head')) return;
+        const titleEl = sidebar.querySelector('h3');
+        const title = titleEl ? titleEl.textContent.trim() : 'معلومات العملية';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sidebar-mobile-head';
+        btn.textContent = title;
+        btn.addEventListener('click', function () {
+            sidebar.classList.toggle('mobile-collapsed');
+            btn.classList.toggle('open');
+        });
+        sidebar.insertBefore(btn, sidebar.firstChild);
+        sidebar.classList.add('mobile-collapsed');
+    });
+});
+</script>
+
+<div class="container split-layout">
+    
+    <div class="sidebar">
+        <h3 style="color:#fff; border-bottom:2px solid var(--d-gold); padding-bottom:10px; margin-top:0;">معلومات العملية</h3>
+        
+        <div class="info-block">
+            <span class="info-label">المشروع:</span>
+            <span class="info-value"><?php echo htmlspecialchars($job['job_name']); ?></span>
+        </div>
+        <div class="info-block">
+            <span class="info-label">العميل:</span>
+            <span class="info-value"><?php echo htmlspecialchars($job['client_name']); ?></span>
+        </div>
+        
+        <div class="info-block">
+            <span class="info-label">تعليقات الفريق:</span>
+            <div class="comments-box">
+                <?php if(empty($job_note_entries)): ?>
+                    <div style="color:#666;">لا توجد ملاحظات.</div>
+                <?php else: ?>
+                    <?php foreach($job_note_entries as $note_entry): ?>
+                        <div style="padding:8px 0; border-bottom:1px solid #1f1f1f;">
+                            <div style="color:var(--d-gold); font-size:0.78rem; font-weight:700; margin-bottom:4px;"><?php echo app_h((string)$note_entry['label']); ?></div>
+                            <div style="color:#ddd; line-height:1.7; white-space:pre-wrap;"><?php echo app_h((string)$note_entry['value']); ?></div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+            <form method="POST">
+                <div style="display:flex; gap:5px;">
+                    <input type="text" name="comment_text" class="comment-input" placeholder="اكتب ملاحظة..." required>
+                    <button type="submit" name="add_internal_comment" class="btn btn-gold btn-sm">إرسال</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="info-block" style="border:none;">
+            <span class="info-label">ملفات ومرفقات:</span>
+            <?php if(!empty($all_files)): ?>
+                <?php foreach($all_files as $f): ?>
+                <div class="file-item">
+                    <span style="font-size:1.2rem;">FILE</span>
+                    <a href="<?php echo $f['file_path']; ?>" target="_blank" class="file-link"><?php echo htmlspecialchars($f['description'] ?: basename($f['file_path'])); ?></a>
+                    <form method="POST" style="margin:0;">
+                        <?php echo app_csrf_input(); ?>
+                        <input type="hidden" name="__async_form" value="1"><input type="hidden" name="file_id" value="<?php echo $f['id']; ?>">
+                        <button name="delete_file" class="delete-btn" onclick="return confirm('حذف الملف نهائياً؟')">×</button>
+                    </form>
+                </div>
+                <?php endforeach; ?>
+            <?php else: echo "<div style='color:#666; font-size:0.8rem;'>لا يوجد ملفات.</div>"; endif; ?>
+        </div>
+
+        <?php if($can_force_stage): ?>
+            <div class="control-panel">
+                <span class="info-label" style="text-align:center;">تحكم إداري</span>
+                
+                <div class="control-row">
+                    <?php if($prev_stage): ?>
+                    <form method="POST" style="flex:1; margin:0;">
+                        <input type="hidden" name="target_stage" value="<?php echo $prev_stage; ?>">
+                        <button type="submit" name="force_stage_change" class="btn btn-gray btn-sm" style="width:100%;">« تراجع</button>
+                    </form>
+                    <?php endif; ?>
+                    
+                    <?php if($next_stage): ?>
+                    <form method="POST" style="flex:1; margin:0;">
+                        <input type="hidden" name="target_stage" value="<?php echo $next_stage; ?>">
+                        <button type="submit" name="force_stage_change" class="btn btn-gold btn-sm" style="width:100%; margin:0;">تمرير »</button>
+                    </form>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="main-content">
+        <?php if(!empty($job['job_details'])): ?>
+        <div class="main-card">
+            <h3 class="card-title">تفاصيل الطلب</h3>
+            <div class="info-value" style="color:#eee; line-height:1.6;"><?php echo nl2br(htmlspecialchars($job['job_details'])); ?></div>
+        </div>
+        <?php endif; ?>
+
+        <div class="stage-header">
+            <?php foreach($workflow as $key => $label): ?>
+                <div class="step-badge <?php echo ($key == $curr) ? 'active' : ''; ?>"><?php echo $label['label']; ?></div>
+            <?php endforeach; ?>
+        </div>
+        <div class="stage-summary">
+            <div class="stage-summary-item">
+                <span class="stage-summary-label">المرحلة الحالية</span>
+                <span class="stage-summary-value"><?php echo app_h($curr_label); ?></span>
+            </div>
+            <div class="stage-summary-item">
+                <span class="stage-summary-label">المرحلة السابقة</span>
+                <span class="stage-summary-value"><?php echo app_h($prev_label); ?></span>
+            </div>
+            <div class="stage-summary-item">
+                <span class="stage-summary-label">المرحلة التالية</span>
+                <span class="stage-summary-value"><?php echo app_h($next_label); ?></span>
+            </div>
+        </div>
+        <?php if(!empty($current_stage_outputs)): ?>
+        <div class="stage-output-panel">
+            <div class="stage-output-panel-title">آخر مخرجات المرحلة</div>
+            <div class="stage-output-grid">
+                <?php foreach($current_stage_outputs as $stage_output): ?>
+                <div class="stage-output-box">
+                    <div class="label"><?php echo app_h((string)$stage_output['label']); ?></div>
+                    <div class="value"><?php echo app_h((string)$stage_output['value']); ?></div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if($curr == 'briefing'): ?>
+        <div class="main-card">
+            <h3 class="card-title">مرحلة التجهيز</h3>
+            <div class="app-ai-panel" data-job-id="<?php echo (int)$job['id']; ?>" data-csrf="<?php echo app_h(app_csrf_token()); ?>" data-context="design_brief" data-item-count="1" data-target-selector="textarea[name='imagination_notes']" data-apply-mode="fill-single" style="margin-bottom:15px;">
+                <div class="app-ai-head">
+                    <div class="app-ai-title">مساعد AI للتجهيز</div>
+                    <div class="app-ai-note">يبني ملخصًا إبداعيًا سريعًا قابلًا للتعديل</div>
+                </div>
+                <textarea class="app-ai-seed" placeholder="أدخل وصفًا مختصرًا للهوية أو المطلوب أو أي اتجاه فني مبدئي..."><?php echo app_h($current_imagination_notes); ?></textarea>
+                <div class="app-ai-actions">
+                    <button type="button" class="app-ai-btn app-ai-btn-primary app-ai-generate">توليد ملخص إبداعي</button>
+                </div>
+                <div class="app-ai-status"></div>
+                <div class="app-ai-results"></div>
+            </div>
+            <form method="POST" enctype="multipart/form-data" class="op-async-form" data-upload-progress="1">
+                <input type="hidden" name="__async_form" value="1">
+                <label style="color:#aaa;">وصف التخيل الفني / تعليمات المصمم:</label>
+                <textarea name="imagination_notes" rows="4" style="width:100%; background:#000; border:1px solid #444; color:#fff; padding:15px; margin-bottom:15px;" placeholder="اكتب هنا..."><?php echo app_h($current_imagination_notes); ?></textarea>
+                
+                <div id="help_files_area">
+                    <label style="color:#aaa;">ملفات مساعدة (شعار، صور، خطوط):</label>
+                    <div style="display:flex; gap:10px; margin-bottom:10px;">
+                        <input type="file" name="help_files[]" style="color:#fff; width:100%;">
+                        <button type="submit" name="upload_brief_files" class="btn btn-gray" style="width:auto; white-space:nowrap;">رفع الملفات</button>
+                        <input type="text" name="help_desc[]" placeholder="وصف الملف" style="background:#000; border:1px solid #444; color:#fff; padding:5px; flex:1; display:none;">
+                    </div>
+                </div>
+                <button type="button" onclick="addHelpFile()" class="btn btn-gray" style="width:auto; margin-bottom:15px;">+ ملف آخر</button>
+                <button type="submit" name="save_brief" class="btn btn-gold">حفظ وبدء التصميم</button>
+                <div class="op-form-status" style="display:none; margin-top:10px; font-size:0.9rem;"></div>
+                <div class="op-form-progress" style="display:none; margin-top:10px;"><div style="height:8px; background:#222; border-radius:999px; overflow:hidden;"><div class="op-form-progress-bar" style="width:0%; height:8px; background:linear-gradient(90deg,#c79c2f,#f4d269);"></div></div><div class="op-form-progress-text" style="margin-top:6px; color:#aaa; font-size:0.85rem;">جاري الرفع...</div></div>
+            </form>
+        </div>
+        <script>function addHelpFile() { let div = document.createElement('div'); div.innerHTML = `<div style="display:flex; gap:10px; margin-bottom:10px;"><input type="file" name="help_files[]" style="color:#fff; width:100%;"><button type="submit" name="upload_brief_files" class="btn btn-gray" style="width:auto; white-space:nowrap;">رفع الملفات</button></div>`; document.getElementById('help_files_area').appendChild(div); }</script>
+        <?php endif; ?>
+
+        <?php if($curr == 'design'): ?>
+        <div class="main-card">
+            <h3 class="card-title">ورشة التصميم</h3>
+            <p style="color:#aaa; margin-bottom:20px; font-size:0.9rem;">يمكنك رفع التصاميم، حفظ العمل، أو الإرسال للمراجعة.</p>
+            <div class="app-ai-panel" data-job-id="<?php echo (int)$job['id']; ?>" data-csrf="<?php echo app_h(app_csrf_token()); ?>" data-context="design_prompts" data-item-count="<?php echo (int)$items_count; ?>" style="margin-bottom:15px;">
+                <div class="app-ai-head">
+                    <div class="app-ai-title">مساعد AI للتصميمات</div>
+                    <div class="app-ai-note">اقتراحات سريعة لكل بند قبل التنفيذ</div>
+                </div>
+                <textarea class="app-ai-seed" placeholder="أدخل طابعًا بصريًا أو توجيهًا إضافيًا للمصمم..."></textarea>
+                <div class="app-ai-actions">
+                    <button type="button" class="app-ai-btn app-ai-btn-primary app-ai-generate">توليد مقترحات تصميم</button>
+                </div>
+                <div class="app-ai-status"></div>
+                <div class="app-ai-results"></div>
+            </div>
+            
+            <form method="POST" enctype="multipart/form-data" class="op-async-form" data-upload-progress="1">
+                <input type="hidden" name="__async_form" value="1">
+                <div class="item-grid">
+                    <?php for($i=0; $i<$items_count; $i++): 
+                        $proof = $latest_proofs[$i];
+                        $status = $proof['status'] ?? 'new';
+                        $is_approved = ($status == 'approved');
+                    ?>
+                    <div class="item-card <?php echo $status == 'rejected' ? 'rejected' : ($is_approved ? 'approved' : ''); ?>">
+                        
+                        <?php if($proof): ?>
+                            <a href="<?php echo $proof['file_path']; ?>" target="_blank">
+                                <img src="<?php echo $proof['file_path']; ?>" class="item-img">
+                            </a>
+                        <?php else: ?>
+                            <div class="item-img" style="display:flex; align-items:center; justify-content:center; color:#555;">لا يوجد ملف</div>
+                        <?php endif; ?>
+                        
+                        <div class="item-body">
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                                <span style="font-weight:bold; color:#fff;">تصميم بند #<?php echo $i+1; ?></span>
+                                
+                                <?php if($proof): ?>
+                                    <input type="hidden" name="__async_form" value="1"><button type="submit" name="delete_proof" value="<?php echo $proof['id']; ?>" 
+                                            onclick="return confirm('حذف هذا التصميم؟')" 
+                                            style="background:none; border:none; color:var(--d-red); cursor:pointer;" title="حذف الملف">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                <?php endif; ?>
+                            </div>
+                            
+                            <?php if($proof && !empty($proof['client_comment'])): ?>
+                                <div class="<?php echo ($status=='rejected')?'feedback-box':'feedback-info'; ?>">
+                                    <?php echo htmlspecialchars($proof['client_comment']); ?>
+                                </div>
+                            <?php endif; ?>
+
+                            <?php if($is_approved): ?>
+                                <div class="status-badge st-approved" style="margin-top:10px;">معتمد</div>
+                            <?php elseif($status == 'rejected'): ?>
+                                <div class="status-badge st-rejected" style="margin-top:10px;">مرفوض - تعديل مطلوب</div>
+                                <label style="color:#aaa; font-size:0.8rem; margin-top:10px; display:block;">رفع التعديل:</label>
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                                    <input type="file" name="design_files[<?php echo $i; ?>]" style="color:#fff; font-size:0.8rem; flex:1 1 260px; width:100%;">
+                                    <button type="submit" name="upload_designs_only" class="btn btn-gray" style="width:auto; white-space:nowrap;">رفع الملفات</button>
+                                </div>
+                            <?php else: ?>
+                                <div class="status-badge st-pending" style="margin-top:10px;"><?php echo $proof ? 'تم الرفع والحفظ' : 'بانتظار الرفع'; ?></div>
+                                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                                    <input type="file" name="design_files[<?php echo $i; ?>]" style="color:#fff; font-size:0.8rem; flex:1 1 260px; width:100%;">
+                                    <button type="submit" name="upload_designs_only" class="btn btn-gray" style="width:auto; white-space:nowrap;">رفع الملفات</button>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <?php endfor; ?>
+                </div>
+                
+                <div style="display:flex; gap:10px; margin-top:20px;">
+                    <button type="submit" name="upload_designs_only" class="btn btn-gray" style="flex:1;">حفظ ورفع التصاميم</button>
+                    <button type="submit" name="send_to_review" class="btn btn-gold" style="flex:1;" onclick="return confirm('هل أنت متأكد من إرسال التصاميم للعميل للمراجعة؟');">إرسال للمراجعة</button>
+                </div>
+                <div class="op-form-status" style="display:none; margin-top:10px; font-size:0.9rem;"></div>
+                <div class="op-form-progress" style="display:none; margin-top:10px;"><div style="height:8px; background:#222; border-radius:999px; overflow:hidden;"><div class="op-form-progress-bar" style="width:0%; height:8px; background:linear-gradient(90deg,#c79c2f,#f4d269);"></div></div><div class="op-form-progress-text" style="margin-top:6px; color:#aaa; font-size:0.85rem;">جاري الرفع...</div></div>
+            </form>
+        </div>
+        <?php endif; ?>
+
+        <?php if($curr == 'client_rev'): ?>
+        <div class="main-card">
+            <h3 class="card-title">مراجعة العميل</h3>
+            <?php 
+            $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http");
+            $host = $_SERVER['HTTP_HOST'];
+            $path = dirname($_SERVER['PHP_SELF']); 
+            $base_url = str_replace('/modules', '', "$protocol://$host$path"); 
+            $client_link = app_client_review_link($conn, $job);
+            
+            $approved_count = 0; $rejected_count = 0;
+            foreach($latest_proofs as $p) {
+                if($p && $p['status'] == 'approved') $approved_count++;
+                if($p && $p['status'] == 'rejected') $rejected_count++;
+            }
+            ?>
+            
+            <div style="text-align:center; padding:20px; background:#111; border-radius:10px; margin-bottom:20px;">
+                <p style="color:#aaa;">رابط المراجعة للعميل:</p>
+                <input type="text" value="<?php echo $client_link; ?>" readonly style="width:100%; background:#000; color:var(--d-green); text-align:center; padding:10px; border:1px dashed #444; margin-bottom:15px; direction:ltr; font-family:monospace;">
+                <a href="<?php echo get_wa_link($job['client_phone'], "مرحباً، يرجى مراجعة التصاميم واعتمادها:\n$client_link"); ?>" target="_blank" class="wa-btn"><i class="fa-brands fa-whatsapp"></i> إرسال واتساب</a>
+            </div>
+
+            <h4 style="color:#fff;">حالة البنود (<?php echo "$approved_count / $items_count"; ?> معتمد):</h4>
+            <div class="item-grid">
+                <?php for($i=0; $i<$items_count; $i++): 
+                    $proof = $latest_proofs[$i];
+                    $status = $proof['status'] ?? 'pending';
+                ?>
+                <div class="item-card <?php echo $status; ?>">
+                    <?php if($proof): ?>
+                        <a href="<?php echo $proof['file_path']; ?>" target="_blank"><img src="<?php echo $proof['file_path']; ?>" class="item-img"></a>
+                    <?php else: ?>
+                        <div class="item-img"></div>
+                    <?php endif; ?>
+                    <div class="item-body">
+                        <span style="color:#fff; font-weight:bold;">بند #<?php echo $i+1; ?></span>
+                        
+                        <?php if($proof && !empty($proof['client_comment'])): ?>
+                            <div class="<?php echo ($status=='rejected')?'feedback-box':'feedback-info'; ?>">
+                                <?php echo htmlspecialchars($proof['client_comment']); ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <?php if($status == 'approved'): ?>
+                            <span class="status-badge st-approved">معتمد</span>
+                        <?php elseif($status == 'rejected'): ?>
+                            <span class="status-badge st-rejected">مرفوض</span>
+                        <?php else: ?>
+                            <span class="status-badge st-pending">قيد الانتظار</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endfor; ?>
+            </div>
+
+            <div style="margin-top:20px; border-top:1px solid #333; padding-top:20px;">
+                <?php if($rejected_count > 0): ?>
+                    <div style="text-align:center; color:var(--d-red); margin-bottom:10px; font-weight:bold;">هناك بنود مرفوضة ويجب إعادتها للتصميم.</div>
+                    <form method="POST"><input type="hidden" name="return_reason" value="تعديلات مطلوبة"><button name="manual_rollback" class="btn btn-red">إعادة للتصميم</button></form>
+                <?php elseif($approved_count == $items_count): ?>
+                    <div style="text-align:center; color:var(--d-green); margin-bottom:10px; font-weight:bold;">جميع التصاميم معتمدة.</div>
+                    <form method="POST"><button name="finalize_review" class="btn btn-gold">إتمام واعتماد نهائي</button></form>
+                <?php else: ?>
+                    <p style="text-align:center; color:#666;">بانتظار رد العميل على باقي البنود...</p>
+                    <form method="POST"><input type="hidden" name="return_reason" value="تراجع يدوي"><button name="manual_rollback" class="btn btn-gray" style="width:auto;">تراجع للتصميم</button></form>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if($curr == 'handover'): ?>
+        <div class="main-card">
+            <h3 class="card-title">تسليم الملفات النهائية</h3>
+            <form method="POST" enctype="multipart/form-data" style="background:#111; padding:15px; border-radius:8px;" class="op-async-form" data-upload-progress="1">
+                <input type="hidden" name="__async_form" value="1">
+                <label style="color:#aaa;">رابط خارجي (Drive/Dropbox):</label>
+                <input type="text" name="source_link" value="<?php echo app_h($current_handover_link); ?>" style="width:100%; padding:10px; background:#222; border:1px solid #444; color:#fff; margin-bottom:10px;">
+                <label style="color:#aaa;">أو رفع ملفات المصدر (Zip/AI/PSD):</label>
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:15px;">
+                    <input type="file" name="source_files[]" multiple style="color:#fff; flex:1 1 320px; display:block;">
+                    <button type="submit" name="upload_handover_files" class="btn btn-gray" style="width:auto; white-space:nowrap;">رفع الملفات</button>
+                </div>
+                <div class="op-form-status" style="display:none; margin-top:10px; font-size:0.9rem;"></div>
+                <div class="op-form-progress" style="display:none; margin-top:10px;"><div style="height:8px; background:#222; border-radius:999px; overflow:hidden;"><div class="op-form-progress-bar" style="width:0%; height:8px; background:linear-gradient(90deg,#c79c2f,#f4d269);"></div></div><div class="op-form-progress-text" style="margin-top:6px; color:#aaa; font-size:0.85rem;">جاري الرفع...</div></div>
+            </form>
+            <div style="display:grid; gap:10px; margin-top:20px;">
+                <form method="POST">
+                    <button type="submit" name="finish_handover" class="btn btn-gold">تأكيد التسليم وإنشاء فاتورة</button>
+                </form>
+                <form method="POST" onsubmit="return confirm('سيتم تحويل العملية للحسابات بدون إنشاء فاتورة تلقائية. متابعة؟');">
+                    <button type="submit" name="finish_handover_no_invoice" class="btn btn-gray">التحويل للحسابات بدون فاتورة</button>
+                </form>
+                <div style="color:#aaa; font-size:0.84rem;">استخدم هذا إذا كانت الفاتورة موجودة بالفعل أو ستصل من ETA لاحقاً.</div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if($curr == 'accounting'): ?>
+        <div class="main-card" style="text-align:center;">
+            <h2 style="color:var(--d-green);">قسم الحسابات</h2>
+            <?php if($is_financial): ?>
+                <a href="invoices.php?tab=sales" class="btn btn-gray" style="display:inline-block; width:auto; margin-bottom:10px;">الفواتير</a>
+                <form method="POST"><button name="archive_job" class="btn btn-gold" style="width:auto;">أرشفة العملية</button></form>
+            <?php else: ?>
+                <p style="color:#aaa;">العملية لدى الإدارة المالية لإغلاق الحساب.</p>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if($curr == 'completed'): ?>
+        <div class="main-card" style="text-align:center;">
+            <h2 style="color:var(--d-green);">مكتملة ومؤرشفة</h2>
+            <form method="POST" onsubmit="return confirm('هل تريد إعادة فتح العملية؟');"><button name="reopen_job" class="btn btn-red" style="width:auto;">إعادة فتح</button></form>
+        </div>
+        <?php endif; ?>
+
+    </div>
+</div>
+
+<?php if (!$app_module_embedded) { include 'footer.php'; } ?>
+<script>
+    (function() {
+        const forms = document.querySelectorAll('.op-async-form');
+        if (!forms.length) return;
+        forms.forEach(function(form) {
+            form.addEventListener('submit', function(evt) {
+                evt.preventDefault();
+                const submitter = evt.submitter || document.activeElement;
+                const data = new FormData(form);
+                const statusBox = form.querySelector('.op-form-status');
+                const progressWrap = form.querySelector('.op-form-progress');
+                const progressBar = form.querySelector('.op-form-progress-bar');
+                const progressText = form.querySelector('.op-form-progress-text');
+                const trackProgress = form.getAttribute('data-upload-progress') === '1';
+                if (submitter && submitter.name) {
+                    data.set(submitter.name, submitter.value || '1');
+                }
+                if (statusBox) {
+                    statusBox.style.display = 'block';
+                    statusBox.style.color = '#aaa';
+                    statusBox.textContent = 'جاري التنفيذ...';
+                }
+                if (progressWrap) progressWrap.style.display = trackProgress ? 'block' : 'none';
+                if (progressBar) progressBar.style.width = '0%';
+                if (submitter) submitter.disabled = true;
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', form.getAttribute('action') || window.location.href, true);
+                xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+                xhr.upload.addEventListener('progress', function(e) {
+                    if (!trackProgress || !e.lengthComputable) return;
+                    const percent = Math.max(0, Math.min(100, Math.round((e.loaded / e.total) * 100)));
+                    if (progressBar) progressBar.style.width = percent + '%';
+                    if (progressText) progressText.textContent = 'جاري الرفع... ' + percent + '%';
+                });
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState !== 4) return;
+                    if (submitter) submitter.disabled = false;
+                    let payload = null;
+                    try { payload = JSON.parse(xhr.responseText || '{}'); } catch (err) { payload = null; }
+                    if (xhr.status >= 200 && xhr.status < 300 && payload && payload.ok) {
+                        if (statusBox) {
+                            statusBox.style.color = '#9fd6a8';
+                            statusBox.textContent = payload.message || 'تم التنفيذ بنجاح.';
+                        }
+                        if (progressBar) progressBar.style.width = '100%';
+                        if (payload.reload) {
+                            window.setTimeout(function() {
+                                window.location.href = payload.redirect || window.location.href;
+                            }, 400);
+                        }
+                        return;
+                    }
+                    if (statusBox) {
+                        const fallbackError = xhr.status === 413
+                            ? 'حجم الملفات أكبر من حد الرفع المسموح. ارفع الملفات على دفعات.'
+                            : 'تعذر تنفيذ العملية. قد يكون الرد غير مكتمل بسبب حجم الرفع أو انتهاء الجلسة.';
+                        statusBox.style.color = '#d98c8c';
+                        statusBox.textContent = (payload && payload.error) ? payload.error : fallbackError;
+                    }
+                    if (progressWrap) progressWrap.style.display = 'none';
+                };
+                xhr.send(data);
+            });
+        });
+    })();
+</script>

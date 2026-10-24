@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>لوحة الحساب | Arab Eagles</title>
+
+    <link rel="manifest" href="manifest.json">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <style>
+        body {
+            background:
+                radial-gradient(circle at top right, rgba(212, 175, 55, 0.14), transparent 28%),
+                linear-gradient(180deg, #060606 0%, #0c0c0c 45%, #070707 100%);
+            color: var(--text-main);
+            font-family: 'Cairo', sans-serif;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .dashboard-shell {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px 18px 110px;
+        }
+
+        .hero-card,
+        .balance-card,
+        .activity-list,
+        .empty-block {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            box-shadow: 0 22px 40px rgba(0, 0, 0, 0.38);
+        }
+
+        .hero-card {
+            padding: 24px;
+            margin-bottom: 18px;
+        }
+
+        .hero-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .hero-title {
+            margin: 0 0 6px;
+            font-size: 1.55rem;
+            font-weight: 900;
+            color: #fff;
+        }
+
+        .hero-title span {
+            color: var(--gold);
+        }
+
+        .hero-subtitle {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+            font-weight: 600;
+        }
+
+        .hero-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(212, 175, 55, 0.24);
+            background: rgba(212, 175, 55, 0.08);
+            color: var(--gold);
+            font-size: 0.82rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .quick-actions-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .qa-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 18px;
+            border-radius: 18px;
+            text-decoration: none;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .qa-btn:hover {
+            transform: translateY(-2px);
+            border-color: rgba(212, 175, 55, 0.32);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .qa-btn i {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(212, 175, 55, 0.06));
+            color: var(--gold);
+            font-size: 1rem;
+        }
+
+        .qa-btn strong {
+            display: block;
+            font-size: 0.92rem;
+            font-weight: 800;
+        }
+
+        .qa-btn small {
+            display: block;
+            margin-top: 3px;
+            color: var(--text-muted);
+            font-size: 0.74rem;
+            font-weight: 600;
+        }
+
+        .balance-card {
+            padding: 22px 24px;
+            margin-bottom: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .balance-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-muted);
+            font-size: 0.86rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .balance-value {
+            font-size: 2.25rem;
+            font-weight: 900;
+            color: #fff;
+            letter-spacing: -0.03em;
+            line-height: 1;
+        }
+
+        .balance-value span {
+            color: var(--gold);
+            font-size: 1rem;
+            font-weight: 800;
+            margin-right: 6px;
+        }
+
+        .balance-note {
+            color: var(--text-muted);
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .metric-card {
+            text-decoration: none;
+            color: inherit;
+            background: var(--panel-bg-soft);
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            padding: 18px;
+            box-shadow: 0 16px 28px rgba(0, 0, 0, 0.28);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(212, 175, 55, 0.3);
+        }
+
+        .metric-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .metric-head i {
+            color: var(--gold);
+            font-size: 1rem;
+        }
+
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .metric-value {
+            font-size: 1.9rem;
+            font-weight: 900;
+            color: #fff;
+            line-height: 1;
+        }
+
+        .metric-foot {
+            margin-top: 8px;
+            color: var(--text-muted);
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin: 18px 0 12px;
+        }
+
+        .section-title {
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #fff;
+            font-size: 1.08rem;
+            font-weight: 800;
+        }
+
+        .section-title i {
+            color: var(--gold);
+        }
+
+        .section-link {
+            text-decoration: none;
+            color: var(--gold);
+            font-size: 0.82rem;
+            font-weight: 800;
+        }
+
+        .dashboard-insights {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+
+        .activity-list {
+            padding: 12px;
+        }
+
+        .activity-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 14px;
+            padding: 16px;
+            border-radius: 18px;
+            text-decoration: none;
+            color: inherit;
+            background: rgba(255, 255, 255, 0.025);
+            border: 1px solid transparent;
+            transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+        }
+
+        .activity-item + .activity-item {
+            margin-top: 10px;
+        }
+
+        .activity-item:hover {
+            transform: translateY(-2px);
+            border-color: rgba(212, 175, 55, 0.26);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .ai-info h4 {
+            margin: 0 0 6px;
+            font-size: 0.98rem;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .ai-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: var(--text-muted);
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+
+        .ai-note {
+            margin-top: 8px;
+            color: #f0cf73;
+            font-size: 0.74rem;
+            font-weight: 600;
+        }
+
+        .ai-status {
+            flex-shrink: 0;
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 800;
+            border: 1px solid transparent;
+        }
+
+        .st-review {
+            color: #f1c86b;
+            background: rgba(241, 200, 107, 0.12);
+            border-color: rgba(241, 200, 107, 0.18);
+        }
+
+        .st-active {
+            color: #9ac7ff;
+            background: rgba(85, 135, 255, 0.12);
+            border-color: rgba(85, 135, 255, 0.18);
+        }
+
+        .st-done {
+            color: #7dd6a5;
+            background: rgba(86, 195, 132, 0.12);
+            border-color: rgba(86, 195, 132, 0.18);
+        }
+
+        .empty-block {
+            padding: 32px 20px;
+            text-align: center;
+        }
+
+        .empty-block i {
+            color: #4a4a4a;
+            font-size: 2.2rem;
+            margin-bottom: 12px;
+        }
+
+        .empty-block p {
+            margin: 0 0 10px;
+            color: var(--text-muted);
+            font-size: 0.92rem;
+            font-weight: 600;
+        }
+
+        .empty-block a {
+            color: var(--gold);
+            text-decoration: none;
+            font-size: 0.82rem;
+            font-weight: 800;
+        }
+
+        #loader {
+            position: fixed;
+            inset: 0;
+            background: #050505;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 14px;
+            transition: opacity 0.35s ease;
+        }
+
+        #loader i {
+            color: var(--gold);
+            font-size: 2.8rem;
+        }
+
+        #loader span {
+            color: #d8d8d8;
+            font-size: 0.88rem;
+            font-weight: 700;
+        }
+
+        @media (max-width: 820px) {
+            .quick-actions-grid,
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .hero-top,
+            .balance-card,
+            .activity-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .hero-tag,
+            .ai-status {
+                align-self: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-header"></div>
+
+    <div id="loader">
+        <i class="fa-solid fa-circle-notch fa-spin"></i>
+        <span>جاري تحميل بيانات الحساب</span>
+    </div>
+
+    <div class="dashboard-shell">
+        <section class="hero-card">
+            <div class="hero-top">
+                <div>
+                    <h1 class="hero-title">الحساب: <span id="dash_u_name">...</span></h1>
+                    <p class="hero-subtitle">متابعة الطلبات والفواتير والإجراءات الجارية من شاشة واحدة.</p>
+                </div>
+                <div class="hero-tag">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <span>بوابة العميل</span>
+                </div>
+            </div>
+
+            <div class="quick-actions-grid">
+                <a href="new_order.html?type=order" class="qa-btn">
+                    <i class="fa-solid fa-plus"></i>
+                    <div>
+                        <strong>طلب تشغيل</strong>
+                        <small>إرسال طلب إنتاج جديد</small>
+                    </div>
+                </a>
+                <a href="new_order.html?type=quote" class="qa-btn">
+                    <i class="fa-solid fa-file-lines"></i>
+                    <div>
+                        <strong>طلب تسعير</strong>
+                        <small>إرسال طلب عرض سعر</small>
+                    </div>
+                </a>
+                <a href="invoices.html" class="qa-btn">
+                    <i class="fa-solid fa-wallet"></i>
+                    <div>
+                        <strong>الفواتير</strong>
+                        <small>مراجعة الرصيد والمطالبات</small>
+                    </div>
+                </a>
+            </div>
+        </section>
+
+        <section class="balance-card">
+            <div>
+                <div class="balance-label">
+                    <i class="fa-solid fa-scale-balanced"></i>
+                    <span>الرصيد المالي المجمع</span>
+                </div>
+                <div class="balance-value"><span>EGP</span><b id="u_balance">0.00</b></div>
+            </div>
+            <div class="balance-note">يتم تحديث الرصيد وفق البيانات المعتمدة في النظام الأساسي.</div>
+        </section>
+
+        <section class="metrics-grid">
+            <a href="orders.html" class="metric-card">
+                <div class="metric-head">
+                    <span class="metric-label">طلبات جارية</span>
+                    <i class="fa-solid fa-diagram-project"></i>
+                </div>
+                <div id="s_active" class="metric-value">0</div>
+                <div class="metric-foot">الطلبات المفتوحة وقيد التنفيذ</div>
+            </a>
+            <a href="quotes.html" class="metric-card">
+                <div class="metric-head">
+                    <span class="metric-label">عروض سعر</span>
+                    <i class="fa-solid fa-file-invoice"></i>
+                </div>
+                <div id="s_quotes" class="metric-value">0</div>
+                <div class="metric-foot">الطلبات التي ما زالت في مرحلة التسعير</div>
+            </a>
+            <a href="invoices.html" class="metric-card">
+                <div class="metric-head">
+                    <span class="metric-label">مطالبات مالية</span>
+                    <i class="fa-solid fa-receipt"></i>
+                </div>
+                <div id="s_invoices" class="metric-value">0</div>
+                <div class="metric-foot">إجمالي الفواتير المرتبطة بالحساب</div>
+            </a>
+        </section>
+
+        <div id="dashboardInsights" class="dashboard-insights"></div>
+
+        <div class="section-header">
+            <h2 class="section-title"><i class="fa-solid fa-clock-rotate-left"></i> آخر النشاطات</h2>
+            <a href="orders.html" class="section-link">عرض جميع الطلبات</a>
+        </div>
+
+        <div id="recentList" class="activity-list">
+            <div class="empty-block">
+                <i class="fa-solid fa-circle-notch fa-spin"></i>
+                <p>جاري تحميل النشاطات</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function animateValue(id, start, end, duration, isCurrency) {
+            if (start === end) return;
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            let startTimestamp = null;
+            const step = function (timestamp) {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                const current = (progress * (end - start)) + start;
+                el.innerText = isCurrency
+                    ? Number(current).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : Math.floor(current);
+                if (progress < 1) {
+                    window.requestAnimationFrame(step);
+                } else {
+                    el.innerText = isCurrency
+                        ? Number(end).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : end;
+                }
+            };
+            window.requestAnimationFrame(step);
+        }
+
+        function toSafeText(value) {
+            if (window.PortalCore && window.PortalCore.escapeHtml) {
+                return window.PortalCore.escapeHtml(value);
+            }
+            return String(value || '');
+        }
+
+        function mapStatus(status) {
+            let stClass = 'st-active';
+            let stText = 'قيد التنفيذ';
+            if (status === 'pending') {
+                stText = 'قيد المراجعة';
+            } else if (status === 'client_rev' || String(status || '').includes('review')) {
+                stClass = 'st-review';
+                stText = 'بانتظار اعتماد العميل';
+            } else if (status === 'completed' || status === 'delivered') {
+                stClass = 'st-done';
+                stText = 'مكتمل';
+            } else if (status === 'cancelled' || status === 'rejected') {
+                stClass = 'st-review';
+                stText = 'متوقف';
+            }
+            return { stClass, stText };
+        }
+
+        async function initDashboard() {
+            try {
+                const result = await window.PortalCore.apiFetch('api/dashboard_data.php', { cacheBust: true });
+
+                if (result.status === 'success') {
+                    const data = result.data || {};
+                    const nameEl = document.getElementById('dash_u_name');
+                    if (nameEl) {
+                        nameEl.innerText = String(data.name || '').trim() || 'الحساب';
+                    }
+
+                    animateValue('u_balance', 0, Number(data.balance || 0), 900, true);
+                    animateValue('s_active', 0, Number(data.active_orders || 0), 700, false);
+                    animateValue('s_quotes', 0, Number(data.pending_quotes || 0), 700, false);
+                    animateValue('s_invoices', 0, Number(data.invoices_count || 0), 700, false);
+
+                    const insights = window.PortalCore.buildDashboardInsights(data);
+                    window.PortalCore.renderInsights('dashboardInsights', insights);
+
+                    const list = document.getElementById('recentList');
+                    if (Array.isArray(data.recent_orders) && data.recent_orders.length > 0) {
+                        list.innerHTML = data.recent_orders.map(function (job) {
+                            const status = mapStatus(job.status);
+                            const rejectionNote = job.rejection_reason
+                                ? '<div class="ai-note">سبب الإيقاف: ' + toSafeText(job.rejection_reason) + '</div>'
+                                : '';
+
+                            return `
+                                <a href="orders.html" class="activity-item">
+                                    <div class="ai-info">
+                                        <h4>${toSafeText(job.job_name || 'طلب بدون عنوان')}</h4>
+                                        <div class="ai-meta">
+                                            <span><i class="fa-solid fa-hashtag"></i> ${toSafeText(job.id)}</span>
+                                            <span><i class="fa-regular fa-calendar"></i> ${window.PortalCore.toDateOnly(job.created_at)}</span>
+                                        </div>
+                                        ${rejectionNote}
+                                    </div>
+                                    <div class="ai-status ${status.stClass}">${status.stText}</div>
+                                </a>
+                            `;
+                        }).join('');
+                    } else {
+                        list.innerHTML = `
+                            <div class="empty-block">
+                                <i class="fa-solid fa-box-open"></i>
+                                <p>لا توجد نشاطات مسجلة حتى الآن.</p>
+                                <a href="new_order.html?type=order">إنشاء طلب جديد</a>
+                            </div>
+                        `;
+                    }
+                } else if (result.message === 'unauthorized') {
+                    window.location.href = 'login.html';
+                } else if (window.PortalCore && window.PortalCore.showToast) {
+                    window.PortalCore.showToast(result.message || 'تعذر تحميل بيانات الحساب', 'error');
+                }
+            } catch (e) {
+                if (e && e.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                    return;
+                }
+                if (window.PortalCore && window.PortalCore.showToast) {
+                    window.PortalCore.showToast('تعذر تحميل بيانات الحساب حالياً', 'error');
+                }
+            } finally {
+                const loader = document.getElementById('loader');
+                loader.style.opacity = '0';
+                setTimeout(function () {
+                    loader.style.display = 'none';
+                }, 350);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initDashboard);
+    </script>
+</body>
+</html>
