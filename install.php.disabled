@@ -1,0 +1,1725 @@
+<?php
+// install.php
+// One-time installer for database schema/bootstrap.
+
+require_once __DIR__ . '/security.php';
+app_start_session();
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+$lockFile = __DIR__ . '/.installed_lock';
+$legacyLockFile = __DIR__ . '/installed_lock.txt';
+$isLocked = is_file($lockFile) || is_file($legacyLockFile);
+$forceRequested = (($_GET['force'] ?? '') === '1');
+$isAdminSession = (($_SESSION['role'] ?? '') === 'admin');
+$isLocalInstallRequest = in_array(app_runtime_host(), ['localhost', '127.0.0.1'], true);
+
+if ($isLocked && !$isAdminSession && !$isLocalInstallRequest) {
+    http_response_code(404);
+    exit;
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if (!app_verify_csrf($_POST['_csrf_token'] ?? '')) {
+        http_response_code(419);
+        die('Invalid CSRF token');
+    }
+}
+
+function installer_auto_system_url(): string
+{
+    $scheme = app_is_https() ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    return $scheme . '://' . $host;
+}
+
+function installer_existing_users_allow_recovery(): bool
+{
+    $dbHost = trim((string)app_env('DB_HOST', (string)app_env('MYSQL_HOST', 'localhost')));
+    $dbUser = trim((string)app_env('DB_USER', (string)app_env('MYSQL_USER', '')));
+    $dbPass = (string)app_env('DB_PASS', (string)app_env('MYSQL_PASSWORD', (string)app_env('MYSQL_PASS', '')));
+    $dbName = trim((string)app_env('DB_NAME', (string)app_env('MYSQL_DATABASE', (string)app_env('MYSQL_DB', ''))));
+    $dbPort = (int)app_env('DB_PORT', (string)app_env('MYSQL_PORT', '3306'));
+    $dbSocket = trim((string)app_env('DB_SOCKET', (string)app_env('MYSQL_SOCKET', '')));
+
+    if ($dbHost === '' || $dbUser === '' || $dbName === '') {
+        return true;
+    }
+
+    try {
+        $conn = ($dbSocket !== '')
+            ? new mysqli($dbHost, $dbUser, $dbPass, $dbName, $dbPort, $dbSocket)
+            : new mysqli($dbHost, $dbUser, $dbPass, $dbName, $dbPort);
+        $conn->set_charset('utf8mb4');
+        if (!app_table_exists($conn, 'users')) {
+            $conn->close();
+            return true;
+        }
+        app_initialize_access_control($conn);
+        app_users_schema_map_reset();
+        $map = app_users_schema_map($conn);
+        $selectSql = app_users_select_alias_sql($map, ['id', 'role']);
+        $idColumn = app_users_resolved_column($map, 'id');
+        if ($idColumn === '') {
+            $conn->close();
+            return true;
+        }
+        $res = $conn->query("SELECT {$selectSql} FROM users ORDER BY `{$idColumn}` ASC");
+        $total = 0;
+        $hasAdmin = false;
+        if ($res) {
+            while ($row = $res->fetch_assoc()) {
+                $total++;
+                if (strtolower(trim((string)($row['role'] ?? 'employee'))) === 'admin') {
+                    $hasAdmin = true;
+                    break;
+                }
+            }
+        }
+        $conn->close();
+        return ($total === 0 || !$hasAdmin);
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function installer_execute_schema(mysqli $conn): void
+{
+    $schema = [
+        "CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(80) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL,
+            full_name VARCHAR(120) NOT NULL,
+            role VARCHAR(40) NOT NULL DEFAULT 'employee',
+            phone VARCHAR(40) DEFAULT NULL,
+            email VARCHAR(120) DEFAULT NULL,
+            avatar VARCHAR(255) DEFAULT NULL,
+            profile_pic VARCHAR(255) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            email VARCHAR(190) NOT NULL,
+            selector CHAR(16) NOT NULL UNIQUE,
+            token_hash CHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            used_at DATETIME DEFAULT NULL,
+            request_ip VARCHAR(45) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_password_reset_user (user_id),
+            KEY idx_password_reset_email (email),
+            KEY idx_password_reset_expiry (expires_at),
+            KEY idx_password_reset_used (used_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS clients (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            phone VARCHAR(50) DEFAULT NULL,
+            email VARCHAR(150) DEFAULT NULL,
+            password_hash VARCHAR(255) DEFAULT NULL,
+            address TEXT DEFAULT NULL,
+            google_map TEXT DEFAULT NULL,
+            opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            notes TEXT DEFAULT NULL,
+            access_token VARCHAR(100) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS suppliers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            category VARCHAR(100) DEFAULT NULL,
+            phone VARCHAR(50) DEFAULT NULL,
+            email VARCHAR(120) DEFAULT NULL,
+            address TEXT DEFAULT NULL,
+            contact_person VARCHAR(120) DEFAULT NULL,
+            opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            current_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            notes TEXT DEFAULT NULL,
+            access_token VARCHAR(100) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS employees (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            job_title VARCHAR(120) DEFAULT NULL,
+            initial_balance DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS warehouses (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            location VARCHAR(255) DEFAULT NULL,
+            manager_id INT DEFAULT NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS inventory_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            item_code VARCHAR(100) NOT NULL UNIQUE,
+            name VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT NULL,
+            category VARCHAR(120) DEFAULT 'Uncategorized',
+            unit VARCHAR(50) NOT NULL,
+            low_stock_threshold DECIMAL(12,2) NOT NULL DEFAULT 10.00,
+            supplier_id INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS inventory_stock (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            warehouse_id INT NOT NULL,
+            quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_inventory_item_warehouse (item_id, warehouse_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS inventory_transactions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            item_id INT NOT NULL,
+            warehouse_id INT NOT NULL,
+            user_id INT NOT NULL DEFAULT 0,
+            transaction_type ENUM('in','out','transfer','adjustment','initial') NOT NULL,
+            quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            related_order_id INT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_inventory_trans_item (item_id),
+            KEY idx_inventory_trans_wh (warehouse_id),
+            KEY idx_inventory_trans_date (transaction_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS inventory_audit_sessions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            warehouse_id INT NOT NULL,
+            audit_date DATE NOT NULL,
+            title VARCHAR(190) NOT NULL DEFAULT '',
+            notes TEXT DEFAULT NULL,
+            status ENUM('draft','applied') NOT NULL DEFAULT 'draft',
+            created_by_user_id INT DEFAULT NULL,
+            applied_by_user_id INT DEFAULT NULL,
+            applied_at DATETIME DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_inventory_audit_sessions_wh (warehouse_id),
+            KEY idx_inventory_audit_sessions_date (audit_date),
+            KEY idx_inventory_audit_sessions_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS inventory_audit_lines (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            session_id INT NOT NULL,
+            item_id INT NOT NULL,
+            system_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            counted_qty DECIMAL(12,2) DEFAULT NULL,
+            variance_qty DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            notes VARCHAR(255) DEFAULT NULL,
+            counted_by_user_id INT DEFAULT NULL,
+            counted_at DATETIME DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_inventory_audit_session_item (session_id, item_id),
+            KEY idx_inventory_audit_lines_session (session_id),
+            KEY idx_inventory_audit_lines_item (item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS products (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            sku VARCHAR(120) DEFAULT NULL,
+            description TEXT DEFAULT NULL,
+            category VARCHAR(120) DEFAULT NULL,
+            sale_price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            purchase_price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            low_stock_threshold INT NOT NULL DEFAULT 10,
+            image_path VARCHAR(255) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_products_sku (sku)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS product_stock (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            product_id INT NOT NULL,
+            warehouse_id INT NOT NULL,
+            quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            UNIQUE KEY uq_product_warehouse (product_id, warehouse_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS stock_movements (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            product_id INT NOT NULL,
+            warehouse_id INT NOT NULL,
+            quantity_change DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            type VARCHAR(40) NOT NULL DEFAULT 'adjustment',
+            notes TEXT DEFAULT NULL,
+            user_id INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_stock_movements_date (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS job_orders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_number VARCHAR(40) DEFAULT NULL,
+            client_id INT DEFAULT NULL,
+            job_name VARCHAR(255) NOT NULL,
+            job_type VARCHAR(60) NOT NULL DEFAULT 'print',
+            design_status VARCHAR(40) NOT NULL DEFAULT 'ready',
+            status VARCHAR(40) NOT NULL DEFAULT 'pending',
+            start_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            delivery_date DATE DEFAULT NULL,
+            current_stage VARCHAR(60) NOT NULL DEFAULT 'briefing',
+            quantity DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            paid DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            notes LONGTEXT DEFAULT NULL,
+            added_by VARCHAR(120) DEFAULT NULL,
+            job_details LONGTEXT DEFAULT NULL,
+            created_by_user_id INT DEFAULT NULL,
+            access_token VARCHAR(80) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            KEY idx_job_orders_client (client_id),
+            KEY idx_job_orders_stage (current_stage),
+            KEY idx_job_orders_delivery (delivery_date),
+            KEY idx_job_orders_type (job_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS job_files (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            file_path VARCHAR(255) DEFAULT NULL,
+            file_type VARCHAR(60) DEFAULT NULL,
+            stage VARCHAR(80) DEFAULT NULL,
+            description TEXT DEFAULT NULL,
+            uploaded_by VARCHAR(120) DEFAULT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_job_files_job (job_id),
+            KEY idx_job_files_stage (stage)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS job_proofs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            file_path VARCHAR(255) DEFAULT NULL,
+            description TEXT DEFAULT NULL,
+            status VARCHAR(60) NOT NULL DEFAULT 'pending',
+            item_index INT NOT NULL DEFAULT 0,
+            client_comment TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_job_proofs_job (job_id),
+            KEY idx_job_proofs_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS proof_comments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            proof_id INT NOT NULL,
+            job_id INT DEFAULT NULL,
+            comment_text TEXT NOT NULL,
+            comment_by VARCHAR(120) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_proof_comments_proof (proof_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS job_assignments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            user_id INT NOT NULL,
+            assigned_role VARCHAR(40) NOT NULL DEFAULT 'member',
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            assigned_by INT DEFAULT NULL,
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_job_user (job_id, user_id),
+            KEY idx_user_active (user_id, is_active),
+            KEY idx_job_active (job_id, is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS job_materials (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            product_id INT NOT NULL,
+            warehouse_id INT NOT NULL,
+            quantity_used DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_job_materials_job (job_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS social_posts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            job_id INT NOT NULL,
+            post_index INT NOT NULL,
+            idea_text TEXT DEFAULT NULL,
+            idea_status VARCHAR(50) DEFAULT 'pending',
+            idea_feedback TEXT DEFAULT NULL,
+            content_text TEXT DEFAULT NULL,
+            design_path TEXT DEFAULT NULL,
+            status VARCHAR(50) DEFAULT 'pending',
+            client_feedback TEXT DEFAULT NULL,
+            platform VARCHAR(50) DEFAULT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_social_job_post (job_id, post_index)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS quotes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            quote_number VARCHAR(40) DEFAULT NULL,
+            client_id INT NOT NULL,
+            created_at DATE NOT NULL,
+            valid_until DATE NOT NULL,
+            quote_kind VARCHAR(20) NOT NULL DEFAULT 'standard',
+            tax_law_key VARCHAR(60) DEFAULT NULL,
+            total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            tax_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+            notes TEXT DEFAULT NULL,
+            access_token VARCHAR(100) DEFAULT NULL,
+            items_json LONGTEXT DEFAULT NULL,
+            taxes_json LONGTEXT DEFAULT NULL,
+            converted_invoice_id INT DEFAULT NULL,
+            converted_at DATETIME DEFAULT NULL,
+            KEY idx_quotes_client (client_id),
+            KEY idx_quotes_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS quote_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            quote_id INT NOT NULL,
+            item_name VARCHAR(255) NOT NULL,
+            quantity DECIMAL(12,2) NOT NULL DEFAULT 1.00,
+            price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            KEY idx_quote_items_quote (quote_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS invoices (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            invoice_number VARCHAR(40) DEFAULT NULL,
+            client_id INT NOT NULL,
+            job_id INT DEFAULT NULL,
+            source_quote_id INT DEFAULT NULL,
+            inv_date DATE NOT NULL,
+            due_date DATE DEFAULT NULL,
+            invoice_kind VARCHAR(20) NOT NULL DEFAULT 'standard',
+            tax_law_key VARCHAR(60) DEFAULT NULL,
+            sub_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            tax DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            tax_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            discount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            remaining_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            status VARCHAR(40) NOT NULL DEFAULT 'unpaid',
+            items_json LONGTEXT DEFAULT NULL,
+            taxes_json LONGTEXT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_invoices_client (client_id),
+            KEY idx_invoices_job (job_id),
+            KEY idx_invoices_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS purchase_invoices (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            purchase_number VARCHAR(40) DEFAULT NULL,
+            supplier_id INT NOT NULL,
+            inv_date DATE NOT NULL,
+            due_date DATE DEFAULT NULL,
+            sub_total DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            tax DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            discount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            total_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            remaining_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            status VARCHAR(40) NOT NULL DEFAULT 'unpaid',
+            items_json LONGTEXT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_purchase_invoices_supplier (supplier_id),
+            KEY idx_purchase_invoices_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS financial_receipts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            receipt_number VARCHAR(40) DEFAULT NULL,
+            type ENUM('in','out') NOT NULL,
+            category VARCHAR(50) NOT NULL DEFAULT 'general',
+            amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            description TEXT DEFAULT NULL,
+            trans_date DATE NOT NULL,
+            client_id INT DEFAULT NULL,
+            invoice_id INT DEFAULT NULL,
+            supplier_id INT DEFAULT NULL,
+            employee_id INT DEFAULT NULL,
+            payroll_id INT DEFAULT NULL,
+            user_id INT DEFAULT NULL,
+            created_by VARCHAR(100) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_receipts_date (trans_date),
+            KEY idx_receipts_type (type),
+            KEY idx_receipts_invoice (invoice_id),
+            KEY idx_receipts_payroll (payroll_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS payroll_sheets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            payroll_number VARCHAR(40) DEFAULT NULL,
+            employee_id INT NOT NULL,
+            month_year VARCHAR(7) NOT NULL,
+            basic_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            bonus DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            deductions DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            loan_deduction DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            net_salary DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            remaining_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+            status VARCHAR(40) NOT NULL DEFAULT 'pending',
+            notes TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_payroll_employee_month (employee_id, month_year)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+
+        "CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key VARCHAR(80) PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ];
+
+    foreach ($schema as $query) {
+        $conn->query($query);
+    }
+}
+
+function installer_write_env_file(array $env): bool
+{
+    $existing = app_env_file_values();
+    $existingProfile = strtolower(trim((string)($existing['APP_RUNTIME_PROFILE'] ?? '')));
+    if ($existingProfile === 'saas_gateway') {
+        $env['APP_LICENSE_EDITION'] = 'client';
+        $env['APP_RUNTIME_PROFILE'] = 'saas_gateway';
+        $env['APP_SAAS_MODE'] = '1';
+        $preserveKeys = [
+            'APP_SAAS_CONTROL_DB_HOST',
+            'APP_SAAS_CONTROL_DB_PORT',
+            'APP_SAAS_CONTROL_DB_NAME',
+            'APP_SAAS_CONTROL_DB_USER',
+            'APP_SAAS_CONTROL_DB_PASS',
+            'APP_SAAS_CONTROL_DB_SOCKET',
+            'APP_SAAS_SECRET_KEY',
+            'APP_SAAS_AUTOMATION_TOKEN',
+            'APP_LICENSE_REMOTE_URL',
+            'APP_LICENSE_REMOTE_TOKEN',
+            'APP_LICENSE_REMOTE_ONLY',
+            'APP_LICENSE_REMOTE_LOCK',
+            'APP_LICENSE_PUSH_DISABLED',
+            'APP_LICENSE_DEFAULT_STATUS',
+        ];
+        foreach ($preserveKeys as $preserveKey) {
+            $preserveValue = trim((string)($existing[$preserveKey] ?? ''));
+            if ($preserveValue !== '') {
+                $env[$preserveKey] = $preserveValue;
+            }
+        }
+    }
+
+    $lines = [
+        "# Generated by install.php on " . date('c'),
+    ];
+    foreach ($env as $key => $value) {
+        $lines[] = $key . '=' . $value;
+    }
+    $content = implode("\n", $lines) . "\n";
+    $result = @file_put_contents(__DIR__ . '/.app_env', $content, LOCK_EX);
+    if ($result === false) {
+        return false;
+    }
+    @chmod(__DIR__ . '/.app_env', 0600);
+    return true;
+}
+
+function installer_delete_self(): bool
+{
+    $self = __FILE__;
+    $disabled = __DIR__ . '/install.php.disabled';
+    if (@rename($self, $disabled)) {
+        return true;
+    }
+    if (@unlink($self)) {
+        return true;
+    }
+    return false;
+}
+
+function installer_upsert_admin_user(
+    mysqli $conn,
+    string $username,
+    string $password,
+    string $fullName,
+    string $email = '',
+    string $phone = ''
+): void {
+    $apply = static function () use ($conn, $username, $password, $fullName, $email, $phone): void {
+        installer_ensure_users_minimum_schema($conn);
+        app_initialize_access_control($conn);
+        app_users_schema_map_reset();
+        $map = app_users_schema_map($conn);
+        $idColumn = app_users_resolved_column($map, 'id');
+        $usernameColumn = app_users_resolved_column($map, 'username');
+        $passwordColumn = app_users_resolved_column($map, 'password');
+        $fullNameColumn = app_users_resolved_column($map, 'full_name');
+        $roleColumn = app_users_resolved_column($map, 'role');
+        $emailColumn = app_users_resolved_column($map, 'email');
+        $phoneColumn = app_users_resolved_column($map, 'phone');
+        $isAdminColumn = app_users_resolved_column($map, 'is_admin');
+
+        if ($usernameColumn === '' || $passwordColumn === '') {
+            throw new RuntimeException('تعذر تهيئة جدول المستخدمين بالشكل المطلوب.');
+        }
+
+        $usernameValue = strtolower(trim($username));
+        $fullNameValue = trim($fullName) !== '' ? trim($fullName) : 'System Admin';
+        $emailValue = trim($email);
+        $phoneValue = trim($phone);
+        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+
+        $selectAliases = $idColumn !== '' ? ['id', 'username'] : ['username'];
+        $selectSql = app_users_select_alias_sql($map, $selectAliases);
+        $stmtCheck = $conn->prepare("SELECT {$selectSql} FROM users WHERE LOWER(`{$usernameColumn}`) = LOWER(?) LIMIT 1");
+        $stmtCheck->bind_param('s', $usernameValue);
+        $stmtCheck->execute();
+        $existing = $stmtCheck->get_result()->fetch_assoc() ?: [];
+        $stmtCheck->close();
+
+        if (!empty($existing)) {
+            $setParts = ["`{$passwordColumn}` = ?"];
+            $types = 's';
+            $values = [$passwordHash];
+            if ($fullNameColumn !== '') {
+                $setParts[] = "`{$fullNameColumn}` = ?";
+                $types .= 's';
+                $values[] = $fullNameValue;
+            }
+            if ($roleColumn !== '') {
+                $setParts[] = "`{$roleColumn}` = ?";
+                $types .= 's';
+                $values[] = 'admin';
+            } elseif ($isAdminColumn !== '') {
+                $setParts[] = "`{$isAdminColumn}` = ?";
+                $types .= 'i';
+                $values[] = 1;
+            }
+            if ($emailColumn !== '') {
+                $setParts[] = "`{$emailColumn}` = ?";
+                $types .= 's';
+                $values[] = $emailValue;
+            }
+            if ($phoneColumn !== '') {
+                $setParts[] = "`{$phoneColumn}` = ?";
+                $types .= 's';
+                $values[] = $phoneValue;
+            }
+            if ($idColumn !== '' && !empty($existing['id'])) {
+                $types .= 'i';
+                $values[] = (int)($existing['id'] ?? 0);
+                $stmtUpdate = $conn->prepare("UPDATE users SET " . implode(', ', $setParts) . " WHERE `{$idColumn}` = ? LIMIT 1");
+            } else {
+                $types .= 's';
+                $values[] = $usernameValue;
+                $stmtUpdate = $conn->prepare("UPDATE users SET " . implode(', ', $setParts) . " WHERE LOWER(`{$usernameColumn}`) = LOWER(?) LIMIT 1");
+            }
+            app_stmt_bind_dynamic_params($stmtUpdate, $types, $values);
+            $stmtUpdate->execute();
+            $stmtUpdate->close();
+            return;
+        }
+
+        $columns = ["`{$usernameColumn}`", "`{$passwordColumn}`"];
+        $types = 'ss';
+        $values = [$usernameValue, $passwordHash];
+
+        if ($fullNameColumn !== '' && $fullNameColumn !== $usernameColumn) {
+            $columns[] = "`{$fullNameColumn}`";
+            $types .= 's';
+            $values[] = $fullNameValue;
+        }
+        if ($roleColumn !== '') {
+            $columns[] = "`{$roleColumn}`";
+            $types .= 's';
+            $values[] = 'admin';
+        } elseif ($isAdminColumn !== '') {
+            $columns[] = "`{$isAdminColumn}`";
+            $types .= 'i';
+            $values[] = 1;
+        }
+        if ($emailColumn !== '') {
+            $columns[] = "`{$emailColumn}`";
+            $types .= 's';
+            $values[] = $emailValue;
+        }
+        if ($phoneColumn !== '') {
+            $columns[] = "`{$phoneColumn}`";
+            $types .= 's';
+            $values[] = $phoneValue;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+        $stmtInsert = $conn->prepare("INSERT INTO users (" . implode(', ', $columns) . ") VALUES ({$placeholders})");
+        app_stmt_bind_dynamic_params($stmtInsert, $types, $values);
+        $stmtInsert->execute();
+        $stmtInsert->close();
+    };
+
+    try {
+        $apply();
+    } catch (Throwable $e) {
+        try {
+            installer_force_rebuild_users_table($conn);
+            $apply();
+        } catch (Throwable $inner) {
+            throw new RuntimeException(
+                'تعذر تهيئة جدول المستخدمين. تحقق من صلاحيات قاعدة البيانات (ALTER/RENAME/CREATE/INSERT). التفاصيل: ' . $inner->getMessage(),
+                0,
+                $inner
+            );
+        }
+    }
+}
+
+function installer_random_secret(int $length = 24): string
+{
+    $length = max(12, min(64, $length));
+    return substr(bin2hex(random_bytes((int)ceil($length / 2))), 0, $length);
+}
+
+function installer_clean_identifier(string $value, string $fallback = 'erp', int $maxLength = 32): string
+{
+    $clean = preg_replace('/[^a-zA-Z0-9_]/', '', $value);
+    $clean = is_string($clean) ? $clean : '';
+    if ($clean === '') {
+        $clean = $fallback;
+    }
+    return substr($clean, 0, max(8, $maxLength));
+}
+
+function installer_users_columns(mysqli $conn): array
+{
+    $columns = [];
+    try {
+        $res = $conn->query("SHOW COLUMNS FROM users");
+        while ($res && ($row = $res->fetch_assoc())) {
+            $name = strtolower(trim((string)($row['Field'] ?? '')));
+            if ($name !== '') {
+                $columns[$name] = true;
+            }
+        }
+    } catch (Throwable $e) {
+        return [];
+    }
+    return $columns;
+}
+
+function installer_user_pick_column(array $columns, array $candidates): string
+{
+    foreach ($candidates as $candidate) {
+        $key = strtolower(trim((string)$candidate));
+        if ($key !== '' && isset($columns[$key])) {
+            return $key;
+        }
+    }
+    return '';
+}
+
+function installer_user_pick_value(array $row, array $candidates): string
+{
+    foreach ($candidates as $candidate) {
+        if ($candidate === '' || !array_key_exists($candidate, $row)) {
+            continue;
+        }
+        $value = trim((string)$row[$candidate]);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+    return '';
+}
+
+function installer_normalize_username_seed(string $value, int $fallbackIndex): string
+{
+    $value = mb_strtolower(trim($value));
+    if ($value !== '') {
+        $value = preg_replace('/\s+/u', '_', $value);
+        $value = preg_replace('/[^\p{L}\p{N}_.@-]+/u', '_', $value);
+        $value = trim((string)$value, " \t\n\r\0\x0B._-");
+    }
+    if ($value === '') {
+        $value = 'user_' . $fallbackIndex;
+    }
+    return mb_substr($value, 0, 80);
+}
+
+function installer_unique_username(string $seed, array &$used): string
+{
+    $seed = installer_normalize_username_seed($seed, count($used) + 1);
+    $candidate = $seed;
+    $suffix = 2;
+    while (isset($used[mb_strtolower($candidate)])) {
+        $maxBase = max(1, 80 - (strlen((string)$suffix) + 1));
+        $candidate = mb_substr($seed, 0, $maxBase) . '_' . $suffix;
+        $suffix++;
+    }
+    $used[mb_strtolower($candidate)] = true;
+    return $candidate;
+}
+
+function installer_password_to_hash(string $raw): string
+{
+    $raw = trim($raw);
+    if ($raw === '') {
+        return password_hash('Temp@' . substr(bin2hex(random_bytes(6)), 0, 12), PASSWORD_DEFAULT);
+    }
+    if (preg_match('/^\$2[aby]\$/', $raw) || preg_match('/^\$argon2(id|i)\$/', $raw)) {
+        return $raw;
+    }
+    return password_hash($raw, PASSWORD_DEFAULT);
+}
+
+function installer_users_backup_table_name(mysqli $conn): string
+{
+    $base = 'users_legacy_backup_' . date('Ymd_His');
+    $name = $base;
+    $counter = 1;
+    while (app_table_exists($conn, $name)) {
+        $counter++;
+        $name = $base . '_' . $counter;
+    }
+    return $name;
+}
+
+function installer_force_rebuild_users_table(mysqli $conn): void
+{
+    if (!app_table_exists($conn, 'users')) {
+        installer_ensure_users_minimum_schema($conn);
+        return;
+    }
+
+    $legacyColumns = installer_users_columns($conn);
+    $backupTable = installer_users_backup_table_name($conn);
+    $quotedBackup = '`' . str_replace('`', '``', $backupTable) . '`';
+
+    $conn->query("RENAME TABLE users TO {$quotedBackup}");
+    app_table_has_column_reset('users');
+    app_users_schema_map_reset();
+
+    $conn->query("
+        CREATE TABLE users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(80) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL,
+            full_name VARCHAR(120) NOT NULL,
+            role VARCHAR(40) NOT NULL DEFAULT 'employee',
+            phone VARCHAR(40) DEFAULT NULL,
+            email VARCHAR(120) DEFAULT NULL,
+            avatar VARCHAR(255) DEFAULT NULL,
+            profile_pic VARCHAR(255) DEFAULT NULL,
+            allow_caps TEXT DEFAULT NULL,
+            deny_caps TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $legacyUsername = installer_user_pick_column($legacyColumns, ['username', 'user_name', 'login', 'name', 'email']);
+    $legacyPassword = installer_user_pick_column($legacyColumns, ['password', 'password_hash', 'pass']);
+    $legacyFullName = installer_user_pick_column($legacyColumns, ['full_name', 'display_name', 'name']);
+    $legacyRole = installer_user_pick_column($legacyColumns, ['role', 'user_type', 'type', 'account_type']);
+    $legacyEmail = installer_user_pick_column($legacyColumns, ['email', 'mail']);
+    $legacyPhone = installer_user_pick_column($legacyColumns, ['phone', 'mobile', 'phone_number', 'mobile_number']);
+    $legacyAvatar = installer_user_pick_column($legacyColumns, ['avatar', 'profile_pic']);
+    $legacyProfilePic = installer_user_pick_column($legacyColumns, ['profile_pic', 'avatar']);
+    $legacyIsAdmin = installer_user_pick_column($legacyColumns, ['is_admin']);
+    $legacyCreatedAt = installer_user_pick_column($legacyColumns, ['created_at']);
+
+    $legacyRows = [];
+    $legacyRes = $conn->query("SELECT * FROM {$quotedBackup}");
+    while ($legacyRes && ($row = $legacyRes->fetch_assoc())) {
+        $legacyRows[] = $row;
+    }
+
+    if (!empty($legacyRows)) {
+        $stmt = $conn->prepare("
+            INSERT INTO users (username, password, full_name, role, phone, email, avatar, profile_pic, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $used = [];
+        foreach ($legacyRows as $index => $row) {
+            $seed = installer_user_pick_value($row, array_values(array_filter([
+                $legacyUsername,
+                $legacyEmail,
+                $legacyPhone,
+                $legacyFullName,
+            ])));
+            $username = installer_unique_username($seed, $used);
+            $passwordHash = installer_password_to_hash($legacyPassword !== '' ? (string)($row[$legacyPassword] ?? '') : '');
+            $fullName = installer_user_pick_value($row, array_values(array_filter([$legacyFullName, $legacyUsername])));
+            if ($fullName === '') {
+                $fullName = $username;
+            }
+            $roleRaw = $legacyRole !== '' ? (string)($row[$legacyRole] ?? '') : '';
+            $isAdminValue = $legacyIsAdmin !== '' ? ($row[$legacyIsAdmin] ?? null) : null;
+            $role = app_users_normalize_role_value($roleRaw, $isAdminValue);
+            $phone = $legacyPhone !== '' ? trim((string)($row[$legacyPhone] ?? '')) : '';
+            $email = $legacyEmail !== '' ? trim((string)($row[$legacyEmail] ?? '')) : '';
+            $avatar = $legacyAvatar !== '' ? trim((string)($row[$legacyAvatar] ?? '')) : '';
+            $profilePic = $legacyProfilePic !== '' ? trim((string)($row[$legacyProfilePic] ?? '')) : '';
+            $createdAt = $legacyCreatedAt !== '' ? trim((string)($row[$legacyCreatedAt] ?? '')) : '';
+            if ($createdAt === '' || !preg_match('/^\d{4}-\d{2}-\d{2}/', $createdAt)) {
+                $createdAt = date('Y-m-d H:i:s');
+            }
+            $stmt->bind_param('sssssssss', $username, $passwordHash, $fullName, $role, $phone, $email, $avatar, $profilePic, $createdAt);
+            $stmt->execute();
+            unset($index);
+        }
+        $stmt->close();
+    }
+
+    app_table_has_column_reset('users');
+    app_users_schema_map_reset();
+    installer_ensure_users_minimum_schema($conn);
+}
+
+function installer_ensure_users_minimum_schema(mysqli $conn): void
+{
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(80) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL,
+            full_name VARCHAR(120) NOT NULL,
+            role VARCHAR(40) NOT NULL DEFAULT 'employee',
+            phone VARCHAR(40) DEFAULT NULL,
+            email VARCHAR(120) DEFAULT NULL,
+            avatar VARCHAR(255) DEFAULT NULL,
+            profile_pic VARCHAR(255) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    if (!app_table_exists($conn, 'users')) {
+        return;
+    }
+
+    $columns = installer_users_columns($conn);
+    $ensure = static function (string $column, string $sql) use ($conn, &$columns): void {
+        if (isset($columns[strtolower($column)])) {
+            return;
+        }
+        try {
+            $conn->query($sql);
+            $columns = installer_users_columns($conn);
+            app_table_has_column_reset('users');
+            app_users_schema_map_reset();
+        } catch (Throwable $e) {
+            error_log('installer users schema add failed for ' . $column . ': ' . $e->getMessage());
+        }
+    };
+
+    $ensure('id', "ALTER TABLE users ADD COLUMN id INT NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST");
+    $ensure('username', "ALTER TABLE users ADD COLUMN username VARCHAR(80) DEFAULT NULL");
+    $ensure('password', "ALTER TABLE users ADD COLUMN password VARCHAR(255) NOT NULL DEFAULT ''");
+    $ensure('full_name', "ALTER TABLE users ADD COLUMN full_name VARCHAR(120) NOT NULL DEFAULT ''");
+    $ensure('role', "ALTER TABLE users ADD COLUMN role VARCHAR(40) NOT NULL DEFAULT 'employee'");
+    $ensure('phone', "ALTER TABLE users ADD COLUMN phone VARCHAR(40) DEFAULT NULL");
+    $ensure('email', "ALTER TABLE users ADD COLUMN email VARCHAR(120) DEFAULT NULL");
+
+    try {
+        if (!isset($columns['password']) && isset($columns['password_hash'])) {
+            $conn->query("ALTER TABLE users ADD COLUMN password VARCHAR(255) NOT NULL DEFAULT ''");
+            $conn->query("
+                UPDATE users
+                SET password = password_hash
+                WHERE (password IS NULL OR TRIM(password) = '')
+                  AND password_hash IS NOT NULL
+                  AND TRIM(password_hash) <> ''
+            ");
+        }
+    } catch (Throwable $e) {
+        error_log('installer users password bridge failed: ' . $e->getMessage());
+    }
+
+    try {
+        $columns = installer_users_columns($conn);
+        if (isset($columns['full_name']) && isset($columns['name'])) {
+            $conn->query("
+                UPDATE users
+                SET full_name = name
+                WHERE (full_name IS NULL OR TRIM(full_name) = '')
+                  AND name IS NOT NULL
+                  AND TRIM(name) <> ''
+            ");
+        }
+        if (isset($columns['username'])) {
+            if (isset($columns['name'])) {
+                $conn->query("
+                    UPDATE users
+                    SET username = LOWER(REPLACE(REPLACE(TRIM(name), ' ', '_'), '-', '_'))
+                    WHERE (username IS NULL OR TRIM(username) = '')
+                      AND name IS NOT NULL
+                      AND TRIM(name) <> ''
+                ");
+            }
+            if (isset($columns['id'])) {
+                $conn->query("
+                    UPDATE users
+                    SET username = CONCAT('user_', id)
+                    WHERE username IS NULL OR TRIM(username) = ''
+                ");
+            } else {
+                $conn->query("
+                    UPDATE users
+                    SET username = CONCAT('user_', SUBSTRING(MD5(RAND()),1,8))
+                    WHERE username IS NULL OR TRIM(username) = ''
+                ");
+            }
+        }
+        if (isset($columns['role'])) {
+            if (isset($columns['user_type'])) {
+                $conn->query("
+                    UPDATE users
+                    SET role = LOWER(TRIM(user_type))
+                    WHERE (role IS NULL OR TRIM(role) = '')
+                      AND user_type IS NOT NULL
+                      AND TRIM(user_type) <> ''
+                ");
+            } elseif (isset($columns['type'])) {
+                $conn->query("
+                    UPDATE users
+                    SET role = LOWER(TRIM(type))
+                    WHERE (role IS NULL OR TRIM(role) = '')
+                      AND type IS NOT NULL
+                      AND TRIM(type) <> ''
+                ");
+            } elseif (isset($columns['account_type'])) {
+                $conn->query("
+                    UPDATE users
+                    SET role = LOWER(TRIM(account_type))
+                    WHERE (role IS NULL OR TRIM(role) = '')
+                      AND account_type IS NOT NULL
+                      AND TRIM(account_type) <> ''
+                ");
+            }
+            if (isset($columns['is_admin'])) {
+                $conn->query("
+                    UPDATE users
+                    SET role = 'admin'
+                    WHERE is_admin = 1
+                      AND (role IS NULL OR TRIM(role) = '' OR LOWER(TRIM(role)) IN ('user', 'employee'))
+                ");
+            }
+            $conn->query("
+                UPDATE users
+                SET role = 'employee'
+                WHERE role IS NULL OR TRIM(role) = '' OR LOWER(TRIM(role)) = 'user'
+            ");
+        }
+    } catch (Throwable $e) {
+        error_log('installer users backfill failed: ' . $e->getMessage());
+    }
+
+    app_table_has_column_reset('users');
+    app_users_schema_map_reset();
+}
+
+function installer_auto_provision_database(mysqli $serverConn, string $requestedDbName): array
+{
+    $base = installer_clean_identifier($requestedDbName, 'erp', 40);
+    $suffix = strtolower(substr(bin2hex(random_bytes(4)), 0, 8));
+    $dbName = substr($base . '_' . $suffix, 0, 64);
+    $dbUserBase = installer_clean_identifier($requestedDbName, 'erpusr', 20);
+    $dbUser = substr($dbUserBase . '_' . $suffix, 0, 32);
+    $dbPass = installer_random_secret(26);
+
+    $safeDbName = preg_replace('/[^a-zA-Z0-9_]/', '', $dbName);
+    $safeDbName = is_string($safeDbName) ? $safeDbName : '';
+    if ($safeDbName === '') {
+        throw new RuntimeException('تعذر توليد اسم قاعدة بيانات صالح.');
+    }
+
+    $escUser = $serverConn->real_escape_string($dbUser);
+    $escPass = $serverConn->real_escape_string($dbPass);
+
+    $serverConn->query("CREATE DATABASE IF NOT EXISTS `$safeDbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    $serverConn->query("CREATE USER IF NOT EXISTS '{$escUser}'@'localhost' IDENTIFIED BY '{$escPass}'");
+    $serverConn->query("GRANT ALL PRIVILEGES ON `$safeDbName`.* TO '{$escUser}'@'localhost'");
+
+    // Some hosts require remote host grants; keep best-effort.
+    try {
+        $serverConn->query("CREATE USER IF NOT EXISTS '{$escUser}'@'%' IDENTIFIED BY '{$escPass}'");
+        $serverConn->query("GRANT ALL PRIVILEGES ON `$safeDbName`.* TO '{$escUser}'@'%'");
+    } catch (Throwable $e) {
+        // Ignore optional host grant failures.
+    }
+    $serverConn->query("FLUSH PRIVILEGES");
+
+    return [
+        'db_name' => $safeDbName,
+        'db_user' => $dbUser,
+        'db_pass' => $dbPass,
+    ];
+}
+
+$recoveryAllowed = installer_existing_users_allow_recovery();
+$forceMode = $forceRequested && (!$isLocked || $isAdminSession);
+$forceDenied = $forceRequested && $isLocked && !$isAdminSession;
+
+$installStateKey = 'installer_stage_state_v2';
+$installState = (isset($_SESSION[$installStateKey]) && is_array($_SESSION[$installStateKey])) ? $_SESSION[$installStateKey] : [];
+if (isset($_GET['reset_stage'])) {
+    unset($_SESSION[$installStateKey]);
+    $installState = [];
+}
+
+$error = '';
+$success = '';
+$currentStage = !empty($installState) ? 'save' : 'db';
+
+if ($isLocked && !$forceMode) {
+    $success = 'تم تنفيذ التثبيت مسبقاً. إذا أردت إعادة التثبيت استخدم الرابط ?force=1.';
+    if ($forceDenied) {
+        $error = 'إعادة التثبيت محمية: يجب تسجيل الدخول بحساب مدير أولاً.';
+    }
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && (!$isLocked || $forceMode)) {
+    $postedStage = strtolower(trim((string)($_POST['install_stage'] ?? 'db')));
+
+    if ($postedStage === 'db') {
+        $dbHost = trim((string)($_POST['db_host'] ?? 'localhost'));
+        $dbPort = (int)($_POST['db_port'] ?? 3306);
+        $dbSocket = trim((string)($_POST['db_socket'] ?? ''));
+        $dbUser = trim((string)($_POST['db_user'] ?? ''));
+        $dbPass = (string)($_POST['db_pass'] ?? '');
+        $dbName = trim((string)($_POST['db_name'] ?? ''));
+        $dbAutoProvision = ((string)($_POST['db_auto_provision'] ?? '') === '1');
+
+        $appName = trim((string)($_POST['app_name'] ?? 'Arab Eagles'));
+        $themeColor = app_normalize_hex_color((string)($_POST['theme_color'] ?? '#d4af37'));
+        $timezone = trim((string)($_POST['timezone'] ?? 'Africa/Cairo'));
+        if (!in_array($timezone, timezone_identifiers_list(), true)) {
+            $timezone = 'Africa/Cairo';
+        }
+        $systemUrl = trim((string)($_POST['system_url'] ?? installer_auto_system_url()));
+        if ($systemUrl === '') {
+            $systemUrl = installer_auto_system_url();
+        }
+        $systemUrl = rtrim($systemUrl, '/');
+
+        $licenseEdition = strtolower(trim((string)($_POST['license_edition'] ?? app_env('APP_LICENSE_EDITION', 'client'))));
+        if (!in_array($licenseEdition, ['client', 'owner'], true)) {
+            $licenseEdition = 'client';
+        }
+
+        if ($dbHost === '' || $dbUser === '' || $dbName === '') {
+            $error = 'يرجى تعبئة بيانات قاعدة البيانات المطلوبة في المرحلة الأولى.';
+        } else {
+            try {
+                $serverConn = ($dbSocket !== '')
+                    ? new mysqli($dbHost, $dbUser, $dbPass, '', $dbPort, $dbSocket)
+                    : new mysqli($dbHost, $dbUser, $dbPass, '', $dbPort);
+                $serverConn->set_charset('utf8mb4');
+                $safeDbName = '';
+                $appDbUser = $dbUser;
+                $appDbPass = $dbPass;
+
+                if ($dbAutoProvision) {
+                    $provisioned = installer_auto_provision_database($serverConn, $dbName);
+                    $safeDbName = (string)($provisioned['db_name'] ?? '');
+                    $appDbUser = (string)($provisioned['db_user'] ?? '');
+                    $appDbPass = (string)($provisioned['db_pass'] ?? '');
+                    if ($safeDbName === '' || $appDbUser === '') {
+                        throw new RuntimeException('فشل تجهيز قاعدة بيانات مخصصة تلقائياً.');
+                    }
+                } else {
+                    $safeDbName = preg_replace('/[^a-zA-Z0-9_]/', '', $dbName);
+                    if (!is_string($safeDbName) || $safeDbName === '') {
+                        throw new RuntimeException('اسم قاعدة البيانات غير صالح.');
+                    }
+                }
+                $serverConn->close();
+
+                $conn = ($dbSocket !== '')
+                    ? new mysqli($dbHost, $appDbUser, $appDbPass, $safeDbName, $dbPort, $dbSocket)
+                    : new mysqli($dbHost, $appDbUser, $appDbPass, $safeDbName, $dbPort);
+                $conn->set_charset('utf8mb4');
+                installer_execute_schema($conn);
+                installer_ensure_users_minimum_schema($conn);
+                app_initialize_system_settings($conn);
+                app_initialize_access_control($conn);
+                app_initialize_customization_data($conn);
+                $conn->close();
+
+                $_SESSION[$installStateKey] = [
+                    'db_host' => $dbHost,
+                    'db_port' => $dbPort,
+                    'db_socket' => $dbSocket,
+                    'db_user_app' => $appDbUser,
+                    'db_pass_app' => $appDbPass,
+                    'db_name' => $safeDbName,
+                    'db_auto_provision' => $dbAutoProvision ? '1' : '0',
+                    'app_name' => ($appName !== '' ? $appName : 'Arab Eagles'),
+                    'theme_color' => $themeColor,
+                    'timezone' => $timezone,
+                    'system_url' => $systemUrl,
+                    'license_edition' => $licenseEdition,
+                ];
+                $installState = $_SESSION[$installStateKey];
+                $currentStage = 'save';
+                $success = 'تم تجهيز قاعدة البيانات بنجاح. انتقل الآن إلى المرحلة الثانية لحفظ المدير والربط.';
+            } catch (Throwable $e) {
+                $message = $e->getMessage();
+                if (
+                    !$dbAutoProvision
+                    && (
+                        stripos($message, 'Access denied') !== false
+                        || stripos($message, 'CREATE DATABASE') !== false
+                        || stripos($message, 'GRANT') !== false
+                    )
+                ) {
+                    $message .= ' | جرّب إلغاء التهيئة التلقائية واستعمل قاعدة ومستخدمًا موجودين مسبقًا من لوحة الاستضافة.';
+                }
+                $error = 'فشل تجهيز قاعدة البيانات: ' . $message;
+            }
+        }
+    } elseif ($postedStage === 'save') {
+        if (empty($installState)) {
+            $error = 'انتهت بيانات المرحلة الأولى. أعد تجهيز قاعدة البيانات أولاً.';
+            $currentStage = 'db';
+        } else {
+            $adminFullName = trim((string)($_POST['admin_full_name'] ?? 'Administrator'));
+            $adminUsername = trim((string)($_POST['admin_username'] ?? 'admin'));
+            $adminPassword = (string)($_POST['admin_password'] ?? '');
+            $adminEmail = trim((string)($_POST['admin_email'] ?? ''));
+            $adminPhone = trim((string)($_POST['admin_phone'] ?? ''));
+
+            $licenseEdition = strtolower(trim((string)($installState['license_edition'] ?? 'client')));
+            $ownerBootstrapUrl = trim((string)($_POST['owner_api_url'] ?? ''));
+            $ownerBootstrapToken = trim((string)($_POST['owner_api_token'] ?? ''));
+            $ownerBootstrapLicenseKey = strtoupper(trim((string)($_POST['owner_license_key'] ?? '')));
+            $ownerBootstrapNow = ((string)($_POST['owner_bootstrap_now'] ?? '') === '1');
+            $ownerBootstrapRequested = ($ownerBootstrapUrl !== '' || $ownerBootstrapToken !== '' || $ownerBootstrapLicenseKey !== '');
+
+            if ($adminUsername === '' || $adminPassword === '') {
+                $error = 'يرجى إدخال اسم المستخدم وكلمة المرور للمدير في المرحلة الثانية.';
+            } elseif (strlen($adminPassword) < 8) {
+                $error = 'كلمة مرور المدير يجب أن تكون 8 أحرف على الأقل.';
+            } elseif ($licenseEdition === 'client' && $ownerBootstrapRequested && ($ownerBootstrapUrl === '' || $ownerBootstrapToken === '')) {
+                $error = 'لربط نسخة العميل تلقائياً: أدخل API URL + Token فقط. مفتاح الترخيص سيحقنه نظام المالك.';
+            } elseif ($licenseEdition === 'client' && $ownerBootstrapNow && ($ownerBootstrapUrl === '' || $ownerBootstrapToken === '')) {
+                $error = 'لتنفيذ التفعيل الفوري: أدخل API URL + Token الخاصين بنظام المالك.';
+            } else {
+                try {
+                    $dbHost = (string)($installState['db_host'] ?? 'localhost');
+                    $dbPort = (int)($installState['db_port'] ?? 3306);
+                    $dbSocket = (string)($installState['db_socket'] ?? '');
+                    $appDbUser = (string)($installState['db_user_app'] ?? '');
+                    $appDbPass = (string)($installState['db_pass_app'] ?? '');
+                    $safeDbName = (string)($installState['db_name'] ?? '');
+                    $appName = (string)($installState['app_name'] ?? 'Arab Eagles');
+                    $themeColor = (string)($installState['theme_color'] ?? '#d4af37');
+                    $timezone = (string)($installState['timezone'] ?? 'Africa/Cairo');
+                    $systemUrl = rtrim((string)($installState['system_url'] ?? installer_auto_system_url()), '/');
+
+                    $conn = ($dbSocket !== '')
+                        ? new mysqli($dbHost, $appDbUser, $appDbPass, $safeDbName, $dbPort, $dbSocket)
+                        : new mysqli($dbHost, $appDbUser, $appDbPass, $safeDbName, $dbPort);
+                    $conn->set_charset('utf8mb4');
+
+                    installer_execute_schema($conn);
+                    installer_ensure_users_minimum_schema($conn);
+                    app_initialize_system_settings($conn);
+                    app_initialize_access_control($conn);
+                    app_initialize_customization_data($conn);
+
+                    app_setting_set($conn, 'app_name', $appName !== '' ? $appName : 'Arab Eagles');
+                    app_setting_set($conn, 'theme_color', $themeColor);
+                    app_setting_set($conn, 'timezone', $timezone);
+                    app_setting_set($conn, 'app_logo_path', 'assets/img/Logo.png');
+
+                    installer_upsert_admin_user(
+                        $conn,
+                        $adminUsername,
+                        $adminPassword,
+                        $adminFullName !== '' ? $adminFullName : 'Administrator',
+                        $adminEmail,
+                        $adminPhone
+                    );
+
+                    $sessionDomain = '';
+                    $hostOnly = strtolower(trim((string)parse_url($systemUrl, PHP_URL_HOST)));
+                    if ($hostOnly !== '' && preg_match('/(?:^|\.)areagles\.com$/i', $hostOnly)) {
+                        $sessionDomain = '.areagles.com';
+                    }
+
+                    $bootstrapEnv = [];
+                    if ($licenseEdition === 'client' && $ownerBootstrapNow) {
+                        $bootstrap = app_license_client_bootstrap_from_owner(
+                            $conn,
+                            $ownerBootstrapUrl,
+                            $ownerBootstrapToken,
+                            $ownerBootstrapLicenseKey
+                        );
+                        if (empty($bootstrap['ok'])) {
+                            throw new RuntimeException('فشل ربط الترخيص مع نظام المالك: ' . (string)($bootstrap['error'] ?? 'unknown'));
+                        }
+                        if (isset($bootstrap['env']) && is_array($bootstrap['env'])) {
+                            $bootstrapEnv = $bootstrap['env'];
+                        }
+                    }
+
+                    $env = [
+                        'DB_HOST' => $dbHost,
+                        'DB_PORT' => (string)$dbPort,
+                        'DB_SOCKET' => $dbSocket,
+                        'DB_USER' => $appDbUser,
+                        'DB_PASS' => $appDbPass,
+                        'DB_NAME' => $safeDbName,
+                        'SYSTEM_URL' => $systemUrl,
+                        'APP_DEBUG_DB' => '0',
+                        'APP_LICENSE_EDITION' => $licenseEdition,
+                    ];
+                    if ($sessionDomain !== '') {
+                        $env['APP_SESSION_DOMAIN'] = $sessionDomain;
+                    }
+                    if ($licenseEdition === 'client') {
+                        if ($ownerBootstrapUrl !== '') {
+                            $env['APP_LICENSE_REMOTE_URL'] = $ownerBootstrapUrl;
+                        }
+                        if ($ownerBootstrapToken !== '') {
+                            $env['APP_LICENSE_REMOTE_TOKEN'] = $ownerBootstrapToken;
+                        }
+                        $env['APP_LICENSE_REMOTE_ONLY'] = '1';
+                        $env['APP_LICENSE_REMOTE_LOCK'] = '0';
+                        $env['APP_LICENSE_PUSH_DISABLED'] = '1';
+                        $env['APP_LICENSE_DEFAULT_STATUS'] = 'suspended';
+                    }
+                    foreach ($bootstrapEnv as $k => $v) {
+                        $key = strtoupper(trim((string)$k));
+                        if ($key === '' || !preg_match('/^[A-Z0-9_]+$/', $key)) {
+                            continue;
+                        }
+                        $env[$key] = (string)$v;
+                    }
+
+                    if (!installer_write_env_file($env)) {
+                        throw new RuntimeException('تعذر كتابة ملف .app_env. تأكد من صلاحيات الكتابة.');
+                    }
+
+                    @file_put_contents($lockFile, "installed_at=" . date('c') . "\n", LOCK_EX);
+                    @chmod($lockFile, 0600);
+                    if (is_file($legacyLockFile)) {
+                        @unlink($legacyLockFile);
+                    }
+
+                    app_ensure_dir(__DIR__ . '/uploads/job_files');
+                    app_ensure_dir(__DIR__ . '/uploads/proofs');
+                    app_ensure_dir(__DIR__ . '/uploads/source');
+                    app_ensure_dir(__DIR__ . '/uploads/briefs');
+                    app_ensure_dir(__DIR__ . '/uploads/materials');
+                    app_ensure_dir(__DIR__ . '/uploads/avatars');
+                    app_ensure_dir(__DIR__ . '/uploads/products');
+                    app_harden_upload_directory(__DIR__ . '/uploads');
+
+                    app_audit_log_add($conn, 'system.install_completed', [
+                        'entity_type' => 'system_install',
+                        'entity_key' => $licenseEdition,
+                        'details' => [
+                            'db_name' => $safeDbName,
+                            'db_user' => $appDbUser,
+                            'system_url' => $systemUrl,
+                            'license_edition' => $licenseEdition,
+                            'admin_username' => $adminUsername,
+                            'owner_bootstrap' => $ownerBootstrapNow ? 1 : 0,
+                        ],
+                    ]);
+
+                    $conn->close();
+
+                    unset($_SESSION[$installStateKey]);
+                    $deleted = installer_delete_self();
+                    $redirect = 'login.php?installed=1';
+                    if ($deleted) {
+                        $redirect .= '&installer_deleted=1';
+                    }
+                    header('Location: ' . $redirect);
+                    exit;
+                } catch (Throwable $e) {
+                    $error = 'فشل حفظ المرحلة الثانية: ' . $e->getMessage();
+                    $currentStage = 'save';
+                }
+            }
+        }
+    }
+}
+
+$stageDbHost = (string)($_POST['db_host'] ?? ($installState['db_host'] ?? 'localhost'));
+$stageDbPort = (string)($_POST['db_port'] ?? ($installState['db_port'] ?? '3306'));
+$stageDbSocket = (string)($_POST['db_socket'] ?? ($installState['db_socket'] ?? ''));
+$stageDbUser = (string)($_POST['db_user'] ?? '');
+$stageDbPass = (string)($_POST['db_pass'] ?? '');
+$stageDbName = (string)($_POST['db_name'] ?? ($installState['db_name'] ?? 'erp_db'));
+$stageAppName = (string)($_POST['app_name'] ?? ($installState['app_name'] ?? 'Arab Eagles'));
+$stageThemeColor = (string)($_POST['theme_color'] ?? ($installState['theme_color'] ?? '#d4af37'));
+$stageTimezone = (string)($_POST['timezone'] ?? ($installState['timezone'] ?? 'Africa/Cairo'));
+$stageSystemUrl = (string)($_POST['system_url'] ?? ($installState['system_url'] ?? installer_auto_system_url()));
+$stageLicenseEdition = strtolower((string)($_POST['license_edition'] ?? ($installState['license_edition'] ?? app_env('APP_LICENSE_EDITION', 'client'))));
+$stageDbAutoProvision = ((string)($_POST['db_auto_provision'] ?? ($installState['db_auto_provision'] ?? '0')) === '1');
+$stageOwnerApiUrl = (string)($_POST['owner_api_url'] ?? app_env('APP_LICENSE_REMOTE_URL', ''));
+$stageOwnerApiToken = (string)($_POST['owner_api_token'] ?? app_env('APP_LICENSE_REMOTE_TOKEN', ''));
+$stageOwnerLicenseKey = (string)($_POST['owner_license_key'] ?? app_env('APP_LICENSE_KEY', ''));
+$stageOwnerBootstrapNow = ((string)($_POST['owner_bootstrap_now'] ?? (($stageOwnerApiUrl !== '' && $stageOwnerApiToken !== '') ? '1' : '')) === '1');
+$stageAdminFullName = (string)($_POST['admin_full_name'] ?? 'System Admin');
+$stageAdminUsername = (string)($_POST['admin_username'] ?? 'admin');
+$stageAdminEmail = (string)($_POST['admin_email'] ?? '');
+$stageAdminPhone = (string)($_POST['admin_phone'] ?? '');
+?>
+<!doctype html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>تثبيت النظام</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --gold: #d4af37;
+            --bg: #080808;
+            --panel: #141414;
+            --text: #f0f0f0;
+            --muted: #a7a7a7;
+            --border: #333;
+            --ok: #2ecc71;
+            --err: #e74c3c;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: 'Cairo', sans-serif;
+            background:
+                radial-gradient(circle at 10% 10%, rgba(212,175,55,0.07), transparent 22%),
+                radial-gradient(circle at 90% 80%, rgba(52,152,219,0.08), transparent 26%),
+                var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 28px 14px;
+        }
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 22px;
+            box-shadow: 0 22px 50px rgba(0,0,0,0.45);
+        }
+        h1 {
+            margin: 0 0 8px;
+            color: var(--gold);
+            font-size: 1.55rem;
+        }
+        .sub {
+            margin: 0 0 18px;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+        .msg {
+            border: 1px solid;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 14px;
+            font-weight: 700;
+        }
+        .msg.err { border-color: rgba(231,76,60,0.45); background: rgba(231,76,60,0.12); color: #ffb7af; }
+        .msg.ok { border-color: rgba(46,204,113,0.45); background: rgba(46,204,113,0.12); color: #9ff3c5; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 12px;
+        }
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        label {
+            color: #cfcfcf;
+            font-size: 0.88rem;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 9px;
+            border: 1px solid #3a3a3a;
+            background: #0b0b0b;
+            color: #fff;
+            font-family: 'Cairo', sans-serif;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(212,175,55,0.16);
+        }
+        .section {
+            margin-top: 16px;
+            border: 1px solid #272727;
+            border-radius: 12px;
+            padding: 14px;
+            background: rgba(255,255,255,0.01);
+        }
+        .section h2 {
+            margin: 0 0 10px;
+            font-size: 1rem;
+            color: var(--gold);
+        }
+        .actions {
+            margin-top: 14px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            border: none;
+            border-radius: 10px;
+            padding: 11px 16px;
+            font-family: 'Cairo', sans-serif;
+            font-weight: 800;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-main {
+            background: linear-gradient(135deg, var(--gold), #b8860b);
+            color: #000;
+            min-width: 210px;
+        }
+        .btn-ghost {
+            background: #222;
+            color: #ddd;
+            border: 1px solid #3a3a3a;
+        }
+        .hint {
+            color: #9b9b9b;
+            font-size: 0.83rem;
+            margin-top: 6px;
+        }
+        .summary {
+            display:grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap:10px;
+        }
+        .summary div {
+            background:#0b0b0b;
+            border:1px solid #2d2d2d;
+            border-radius:10px;
+            padding:10px 12px;
+        }
+        .summary b { display:block; color:var(--gold); margin-bottom:4px; font-size:.82rem; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>معالج التثبيت والربط السريع</h1>
+        <p class="sub">الآن يعمل على مرحلتين واضحتين: 1) تجهيز قاعدة البيانات. 2) حفظ المدير والربط. بعد نجاح المرحلة الثانية يحاول تعطيل/حذف <code>install.php</code> تلقائياً.</p>
+
+        <?php if ($dbErrorMode): ?>
+            <div class="msg err">تم فتح صفحة التثبيت تلقائياً بسبب فشل الاتصال بقاعدة البيانات في <code>config.php</code>.</div>
+        <?php endif; ?>
+        <?php if ($error !== ''): ?>
+            <div class="msg err"><?php echo app_h($error); ?></div>
+        <?php endif; ?>
+        <?php if ($success !== ''): ?>
+            <div class="msg ok">
+                <?php echo app_h($success); ?>
+                <div class="actions" style="margin-top:10px;">
+                    <a class="btn btn-ghost" href="login.php">فتح تسجيل الدخول</a>
+                    <?php if (($_SESSION['role'] ?? '') === 'admin'): ?>
+                        <a class="btn btn-main" href="install.php?force=1">إعادة تثبيت (Force)</a>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!$isLocked || $forceMode): ?>
+            <?php if ($currentStage === 'db'): ?>
+                <form method="post">
+                    <?php echo app_csrf_input(); ?>
+                    <input type="hidden" name="install_stage" value="db">
+
+                    <div class="section">
+                        <h2>المرحلة 1: تجهيز قاعدة البيانات</h2>
+                        <div class="grid">
+                            <div class="field">
+                                <label>DB Host *</label>
+                                <input name="db_host" value="<?php echo app_h($stageDbHost); ?>" required>
+                            </div>
+                            <div class="field">
+                                <label>DB Port</label>
+                                <input name="db_port" type="number" value="<?php echo app_h($stageDbPort); ?>">
+                            </div>
+                            <div class="field">
+                                <label>DB Socket (اختياري)</label>
+                                <input name="db_socket" value="<?php echo app_h($stageDbSocket); ?>">
+                            </div>
+                            <div class="field">
+                                <label>DB User *</label>
+                                <input name="db_user" value="<?php echo app_h($stageDbUser); ?>" required>
+                            </div>
+                            <div class="field">
+                                <label>DB Password</label>
+                                <input name="db_pass" type="password" value="<?php echo app_h($stageDbPass); ?>">
+                            </div>
+                            <div class="field">
+                                <label>DB Name *</label>
+                                <input name="db_name" value="<?php echo app_h($stageDbName); ?>" required>
+                            </div>
+                        </div>
+                        <div class="field" style="margin-top:10px;">
+                            <label style="display:flex;align-items:center;gap:8px;">
+                                <input type="checkbox" name="db_auto_provision" value="1" <?php echo $stageDbAutoProvision ? 'checked' : ''; ?> style="width:auto;">
+                                إنشاء قاعدة بيانات + مستخدم + كلمة مرور عشوائية تلقائياً
+                            </label>
+                            <div class="hint">في الاستضافات المشتركة يفضّل ترك هذا الخيار غير مفعّل، ثم إدخال قاعدة ومستخدم موجودين مسبقًا من لوحة الاستضافة. هذه المرحلة تجهز الجداول فقط، بدون حفظ المستخدم أو الربط بعد.</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h2>إعدادات عامة سيتم حفظها في المرحلة الثانية</h2>
+                        <div class="grid">
+                            <div class="field">
+                                <label>إصدار النظام</label>
+                                <select name="license_edition">
+                                    <option value="client" <?php echo $stageLicenseEdition === 'client' ? 'selected' : ''; ?>>Client</option>
+                                    <option value="owner" <?php echo $stageLicenseEdition === 'owner' ? 'selected' : ''; ?>>Owner</option>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>اسم النظام</label>
+                                <input name="app_name" value="<?php echo app_h($stageAppName); ?>">
+                            </div>
+                            <div class="field">
+                                <label>لون الهوية</label>
+                                <input name="theme_color" value="<?php echo app_h($stageThemeColor); ?>">
+                            </div>
+                            <div class="field">
+                                <label>المنطقة الزمنية</label>
+                                <select name="timezone">
+                                    <?php
+                                    $tzList = ['Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai', 'UTC'];
+                                    foreach ($tzList as $tz) {
+                                        $sel = ($stageTimezone === $tz) ? 'selected' : '';
+                                        echo '<option value="' . app_h($tz) . '" ' . $sel . '>' . app_h($tz) . '</option>';
+                                    }
+                                    ?>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label>SYSTEM_URL</label>
+                                <input name="system_url" value="<?php echo app_h($stageSystemUrl); ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="actions">
+                        <button class="btn btn-main" type="submit">تنفيذ المرحلة الأولى</button>
+                        <a class="btn btn-ghost" href="login.php">العودة لتسجيل الدخول</a>
+                    </div>
+                </form>
+            <?php else: ?>
+                <form method="post">
+                    <?php echo app_csrf_input(); ?>
+                    <input type="hidden" name="install_stage" value="save">
+
+                    <div class="section">
+                        <h2>ملخص المرحلة الأولى</h2>
+                        <div class="summary">
+                            <div><b>DB Host</b><?php echo app_h((string)($installState['db_host'] ?? '')); ?></div>
+                            <div><b>DB Name</b><?php echo app_h((string)($installState['db_name'] ?? '')); ?></div>
+                            <div><b>SYSTEM_URL</b><?php echo app_h((string)($installState['system_url'] ?? '')); ?></div>
+                            <div><b>Edition</b><?php echo app_h(strtoupper((string)($installState['license_edition'] ?? 'client'))); ?></div>
+                        </div>
+                        <div class="actions">
+                            <a class="btn btn-ghost" href="install.php?<?php echo $forceMode ? 'force=1&' : ''; ?>reset_stage=1">الرجوع للمرحلة الأولى</a>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <h2>المرحلة 2: حفظ المدير والربط</h2>
+                        <div class="grid">
+                            <div class="field">
+                                <label>الاسم الكامل</label>
+                                <input name="admin_full_name" value="<?php echo app_h($stageAdminFullName); ?>">
+                            </div>
+                            <div class="field">
+                                <label>اسم المستخدم *</label>
+                                <input name="admin_username" value="<?php echo app_h($stageAdminUsername); ?>" required>
+                            </div>
+                            <div class="field">
+                                <label>كلمة المرور *</label>
+                                <input name="admin_password" type="password" required>
+                            </div>
+                            <div class="field">
+                                <label>البريد الإلكتروني</label>
+                                <input name="admin_email" type="email" value="<?php echo app_h($stageAdminEmail); ?>">
+                            </div>
+                            <div class="field">
+                                <label>الهاتف</label>
+                                <input name="admin_phone" value="<?php echo app_h($stageAdminPhone); ?>">
+                            </div>
+                        </div>
+                        <div class="hint">هذا هو حساب الإنقاذ والدخول الأول. يتم إنشاؤه محلياً قبل أي تحكم من نظام المالك.</div>
+                    </div>
+
+                    <?php if (($installState['license_edition'] ?? 'client') === 'client'): ?>
+                        <div class="section">
+                            <h2>التفعيل التلقائي من نظام المالك</h2>
+                            <div class="grid">
+                                <div class="field">
+                                    <label>API URL</label>
+                                    <input name="owner_api_url" value="<?php echo app_h($stageOwnerApiUrl); ?>" placeholder="https://work.areagles.com/license_api.php">
+                                </div>
+                                <div class="field">
+                                    <label>API Token</label>
+                                    <input name="owner_api_token" value="<?php echo app_h($stageOwnerApiToken); ?>" placeholder="AEAPI-...">
+                                </div>
+                                <div class="field">
+                                    <label>License Key (اختياري)</label>
+                                    <input name="owner_license_key" value="<?php echo app_h($stageOwnerLicenseKey); ?>" placeholder="يُترك فارغاً ليقوم نظام المالك بالتعيين تلقائياً">
+                                </div>
+                            </div>
+                            <div class="field" style="margin-top:10px;">
+                                <label style="display:flex;align-items:center;gap:8px;">
+                                    <input type="checkbox" name="owner_bootstrap_now" value="1" <?php echo $stageOwnerBootstrapNow ? 'checked' : ''; ?> style="width:auto;">
+                                    فعّل واربط تلقائياً أثناء الحفظ
+                                </label>
+                                <div class="hint">إذا كان API المالك مضبوطاً، سيقوم النظام بإرسال هوية هذا التنصيب إلى نظام المالك لقراءة الدومين وتعيين مفتاح الترخيص والرمز تلقائياً. لا حاجة لصفحة ربط منفصلة.</div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="actions">
+                        <button class="btn btn-main" type="submit">حفظ المرحلة الثانية وإنهاء التثبيت</button>
+                        <a class="btn btn-ghost" href="install.php?<?php echo $forceMode ? 'force=1&' : ''; ?>reset_stage=1">إعادة تجهيز القاعدة</a>
+                    </div>
+                </form>
+            <?php endif; ?>
+        <?php endif; ?>
+    </div>
+</body>
+</html>

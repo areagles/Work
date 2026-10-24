@@ -1,0 +1,18 @@
+{
+  "name": "areagles/smart-system",
+  "description": "Arab Eagles Smart System test harness",
+  "type": "project",
+  "require": {},
+  "require-dev": {
+    "phpunit/phpunit": "^10.5"
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "SmartSystem\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "phpunit -c phpunit.xml.dist",
+    "ci": "bash scripts/ci_baseline.sh"
+  }
+}

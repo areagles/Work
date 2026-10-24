@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>عروض الأسعار | Arab Eagles</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+
+    <style>
+        body {
+            background:
+                radial-gradient(circle at top right, rgba(212, 175, 55, 0.12), transparent 30%),
+                linear-gradient(180deg, #060606 0%, #0d0d0d 100%);
+        }
+        /* ستايلات خاصة بكروت العروض فقط */
+        /* (تم حذف ستايلات السايدبار والهيدر القديم لأن layout.js سيتكفل بهم) */
+        
+        .quote-card {
+            background: #121212; border-radius: 20px;
+            border: 1px solid #222; padding: 25px;
+            position: relative; transition: 0.3s; margin-bottom: 20px;
+            overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .quote-card:hover { transform: translateY(-5px); border-color: #d4af37; }
+        .quote-card::before {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+            background: linear-gradient(135deg, #d4af37 0%, #aa8c2c 100%);
+        }
+
+        .q-header {
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 20px;
+        }
+        .q-id { font-family: monospace; font-weight: 700; font-size: 1.1rem; color: #fff; letter-spacing: 1px; }
+        
+        .q-body { margin-bottom: 20px; }
+        .q-amount { font-size: 1.8rem; font-weight: 800; color: #d4af37; margin-bottom: 5px; }
+        .q-valid { font-size: 0.85rem; color: #888; display: flex; align-items: center; gap: 5px; }
+        
+        .badge { padding: 6px 12px; border-radius: 30px; font-size: 0.8rem; font-weight: 700; }
+        .st-pending { background: rgba(243, 156, 18, 0.15); color: #f39c12; }
+        .st-approved { background: rgba(46, 204, 113, 0.15); color: #2ecc71; }
+        .st-rejected { background: rgba(231, 76, 60, 0.15); color: #e74c3c; }
+
+        .btn-open {
+            display: flex; justify-content: center; align-items: center; gap: 10px;
+            width: 100%; padding: 12px; background: rgba(255,255,255,0.05);
+            color: #fff; text-decoration: none; border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1); transition: 0.3s; font-weight: 700; font-size: 0.9rem;
+        }
+        .btn-open:hover { 
+            background: #d4af37; color: #000; border-color: transparent; 
+        }
+        
+        /* تنسيق رأس الصفحة الداخلي */
+        .page-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 25px; padding-bottom: 15px; border-bottom: 1px solid #222;
+        }
+        .page-title { color: #d4af37; margin: 0; font-size: 1.3rem; font-weight: 700; }
+        .btn-back {
+            background: rgba(255, 255, 255, 0.05); color: #ccc; text-decoration: none;
+            padding: 8px 16px; border-radius: 50px; font-size: 0.85rem;
+            border: 1px solid #333; display: inline-flex; align-items: center; gap: 8px;
+        }
+        .btn-request {
+            background: linear-gradient(135deg, #d4af37, #f0d77c);
+            color: #050505;
+            text-decoration: none;
+            padding: 9px 16px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            border: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 800;
+        }
+        .quotes-toolbar {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .toolbar-input,
+        .toolbar-select {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #2d2d2d;
+            background: rgba(255,255,255,0.03);
+            color: #fff;
+            padding: 10px 12px;
+            font-family: inherit;
+        }
+        .toolbar-input:focus,
+        .toolbar-select:focus {
+            outline: none;
+            border-color: #d4af37;
+        }
+        .quotes-summary {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-header"></div>
+
+    <div class="container" style="padding:20px 20px 110px;">
+        
+        <div class="page-header">
+            <h2 class="page-title">عروض الأسعار</h2>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <a href="new_order.html?type=quote" class="btn-request">
+                    <i class="fa-solid fa-clipboard-question"></i> طلب عرض سعر جديد
+                </a>
+                <a href="dashboard.html" class="btn-back">
+                    <i class="fa-solid fa-arrow-right"></i> الرئيسية
+                </a>
+            </div>
+        </div>
+
+        <div class="quotes-toolbar">
+            <input id="quoteSearch" class="toolbar-input" type="search" placeholder="ابحث برقم العرض...">
+            <select id="quoteFilter" class="toolbar-select">
+                <option value="all">كل الحالات</option>
+                <option value="pending">بانتظار الموافقة</option>
+                <option value="approved">المعتمدة</option>
+                <option value="rejected">المرفوضة</option>
+            </select>
+        </div>
+
+        <div id="quotesSummary" class="quotes-summary"></div>
+
+        <div id="quotesContainer" class="grid-quotes">
+            <div style="text-align:center; padding:50px; color:#444;">
+                <i class="fa-solid fa-circle-notch fa-spin fa-2x"></i><br><br>جاري تحميل البيانات
+            </div>
+        </div>
+
+    </div>
+
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <script>
+        let quotesCache = [];
+
+        function escapeText(value) {
+            return window.PortalCore.escapeHtml(value);
+        }
+
+        function mapStatus(status) {
+            if (status === 'approved') return { text: 'تم الاعتماد', className: 'st-approved' };
+            if (status === 'rejected') return { text: 'مرفوض', className: 'st-rejected' };
+            return { text: 'بانتظار موافقتك', className: 'st-pending' };
+        }
+
+        function renderSummary(list) {
+            const target = document.getElementById('quotesSummary');
+            const total = list.length;
+            const pending = list.filter(q => q.status === 'pending').length;
+            const approved = list.filter(q => q.status === 'approved').length;
+            const rejected = list.filter(q => q.status === 'rejected').length;
+
+            target.innerHTML = `
+                <div class="smart-chip">الإجمالي<strong>${total}</strong></div>
+                <div class="smart-chip">بانتظارك<strong>${pending}</strong></div>
+                <div class="smart-chip">معتمد<strong>${approved}</strong></div>
+                <div class="smart-chip">مرفوض<strong>${rejected}</strong></div>
+            `;
+        }
+
+        function renderQuotes(list) {
+            const container = document.getElementById('quotesContainer');
+            container.innerHTML = '';
+
+            if (!Array.isArray(list) || !list.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fa-solid fa-folder-open" style="font-size:3rem; color:#333; margin-bottom:15px;"></i>
+                        <p style="color:#888;">لا توجد عروض أسعار متاحة حالياً.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = list.map(q => {
+                const status = mapStatus(q.status);
+                const quoteId = String(q.id || '0').padStart(4, '0');
+                const amount = Number(q.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
+                const link = `${window.location.origin}/view_quote.php?id=${encodeURIComponent(q.id)}&token=${encodeURIComponent(q.access_token || '')}`;
+
+                return `
+                    <div class="quote-card">
+                        <div class="q-header">
+                            <span class="q-id">#${escapeText(quoteId)}</span>
+                            <span class="badge ${status.className}">${status.text}</span>
+                        </div>
+                        <div class="q-body">
+                            <div class="q-amount">${amount} <small>EGP</small></div>
+                            <div class="q-valid">
+                                <i class="fa-regular fa-clock"></i> صالح حتى: ${escapeText(window.PortalCore.toDateOnly(q.valid_until))}
+                            </div>
+                        </div>
+                        <a href="${link}" target="_blank" rel="noopener noreferrer" class="btn-open">
+                            <i class="fa-solid fa-eye"></i> عرض التفاصيل واتخاذ قرار
+                        </a>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function applyFilters() {
+            const search = document.getElementById('quoteSearch').value.trim().toLowerCase();
+            const status = document.getElementById('quoteFilter').value;
+            const list = quotesCache.filter(q => {
+                const idMatch = String(q.id || '').includes(search);
+                const statusMatch = status === 'all' ? true : q.status === status;
+                const searchMatch = !search || idMatch;
+                return statusMatch && searchMatch;
+            });
+            renderQuotes(list);
+        }
+
+        async function loadQuotes() {
+            try {
+                const result = await window.PortalCore.apiFetch('api/get_quotes.php', { cacheBust: true });
+                if (result.status === 'success' && Array.isArray(result.data)) {
+                    quotesCache = result.data;
+                    renderSummary(quotesCache);
+                    applyFilters();
+                } else {
+                    quotesCache = [];
+                    renderSummary([]);
+                    renderQuotes([]);
+                }
+            } catch(e) {
+                if (e && e.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                    return;
+                }
+                console.error(e);
+                document.getElementById('quotesContainer').innerHTML = '<div class="error-state" style="color:#e74c3c;">تعذر تحميل البيانات، يرجى المحاولة لاحقاً.</div>';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            document.getElementById('quoteSearch').addEventListener('input', applyFilters);
+            document.getElementById('quoteFilter').addEventListener('change', applyFilters);
+            loadQuotes();
+        });
+    </script>
+</body>
+</html>

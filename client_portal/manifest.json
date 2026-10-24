@@ -1,0 +1,37 @@
+{
+  "name": "Arab Eagles Portal",
+  "short_name": "Arab Eagles",
+  "start_url": "dashboard.html",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#d4af37",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "assets/images/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "assets/images/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "طلب جديد",
+      "short_name": "طلب جديد",
+      "description": "فتح أمر شغل جديد فوراً",
+      "url": "dashboard.html?action=new_order",
+      "icons": [{ "src": "assets/images/logo.webp", "sizes": "192x192" }]
+    },
+    {
+      "name": "طلباتي",
+      "short_name": "طلباتي",
+      "description": "عرض سجل الطلبات",
+      "url": "orders.html",
+      "icons": [{ "src": "assets/images/logo.webp", "sizes": "192x192" }]
+    }
+  ]
+}

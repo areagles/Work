@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>طلب جديد | Arab Eagles</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+    <link rel="stylesheet" href="css/style.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+
+    <style>
+        body {
+            background:
+                radial-gradient(circle at 12% 0%, rgba(212, 175, 55, 0.14), transparent 32%),
+                radial-gradient(circle at 90% 18%, rgba(59, 130, 246, 0.08), transparent 26%),
+                linear-gradient(180deg, #060606 0%, #0b0b0b 100%);
+            font-family: Cairo, Tahoma, Arial, sans-serif;
+        }
+        .request-shell {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 18px 16px 120px;
+        }
+        .request-hero,
+        .request-card,
+        .sticky-submit {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            box-shadow: 0 22px 42px rgba(0,0,0,.36);
+        }
+        .request-hero {
+            padding: 24px;
+            margin-bottom: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .request-title { margin: 0 0 8px; color: #fff; font-size: 1.65rem; font-weight: 900; }
+        .request-title span { color: var(--gold); }
+        .request-subtitle { margin: 0; color: var(--text-muted); line-height: 1.75; font-size: .92rem; }
+        .back-link {
+            color: var(--gold);
+            text-decoration: none;
+            border: 1px solid rgba(212,175,55,.26);
+            border-radius: 999px;
+            padding: 9px 14px;
+            white-space: nowrap;
+            font-weight: 800;
+            background: rgba(212,175,55,.06);
+        }
+        .mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
+        .mode-card {
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            background: rgba(255,255,255,.03);
+            color: #ddd;
+            padding: 16px;
+            cursor: pointer;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            text-align: right;
+            transition: .2s ease;
+        }
+        .mode-card i {
+            width: 44px;
+            height: 44px;
+            border-radius: 15px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(212,175,55,.1);
+            color: var(--gold);
+        }
+        .mode-card strong { display: block; color: #fff; }
+        .mode-card small { display: block; color: var(--text-muted); margin-top: 3px; }
+        .mode-card.active {
+            border-color: rgba(212,175,55,.72);
+            background: rgba(212,175,55,.09);
+        }
+        .request-card { padding: 20px; margin-bottom: 16px; }
+        .section-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 16px; }
+        .section-head h3 { margin: 0; color: var(--gold); font-size: 1.08rem; font-weight: 900; }
+        .step-badge { color: #111; background: linear-gradient(135deg, var(--gold), #f0d77c); border-radius: 999px; padding: 5px 10px; font-size: .75rem; font-weight: 900; }
+        .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+        .field-grid.three { grid-template-columns: repeat(3, minmax(0,1fr)); }
+        .field { display: grid; gap: 7px; }
+        .field.full { grid-column: 1 / -1; }
+        .field label { color: #e9dfbd; font-weight: 800; font-size: .9rem; }
+        .field small, .upload-rules { color: var(--text-muted); line-height: 1.75; font-size: .8rem; }
+        .p-input, .p-select, textarea {
+            width: 100%;
+            border: 1px solid #303030;
+            background: #080808;
+            color: #fff;
+            border-radius: 14px;
+            padding: 12px 13px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color .2s ease, box-shadow .2s ease;
+        }
+        textarea { min-height: 105px; resize: vertical; }
+        .p-input:focus, .p-select:focus, textarea:focus {
+            border-color: var(--gold);
+            box-shadow: 0 0 0 4px rgba(212,175,55,.08);
+        }
+        .p-select option { color: #111; }
+        .check-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; }
+        .check-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: rgba(255,255,255,.035);
+            border: 1px solid rgba(255,255,255,.07);
+            color: #e6e6e6;
+            font-weight: 700;
+            font-size: .85rem;
+        }
+        .check-item input { accent-color: var(--gold); }
+        .quote-only,
+        .operation-brief { display: none; }
+        .quote-mode .quote-only:not(.operation-brief) { display: block; }
+        .operation-brief.active { display: block; }
+        .upload-panel {
+            border: 1px dashed rgba(212,175,55,.42);
+            background: rgba(212,175,55,.055);
+            border-radius: 18px;
+            padding: 14px;
+        }
+        .file-list { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .file-chip {
+            border: 1px solid rgba(255,255,255,.12);
+            background: rgba(0,0,0,.28);
+            color: #eee;
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: .78rem;
+        }
+        .progress-wrap { display: none; margin-top: 12px; }
+        .progress-track { height: 11px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.08); }
+        .progress-bar { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #35d07f, var(--gold)); transition: width .2s ease; }
+        .progress-text { margin-top: 8px; color: #ddd; font-size: .84rem; }
+        .message {
+            display: none;
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            line-height: 1.7;
+            font-weight: 700;
+        }
+        .message.success { display: block; background: rgba(46,204,113,.13); color: #9df0bd; border: 1px solid rgba(46,204,113,.42); }
+        .message.error { display: block; background: rgba(231,76,60,.13); color: #ffc0b9; border: 1px solid rgba(231,76,60,.42); }
+        .sticky-submit {
+            position: sticky;
+            bottom: 12px;
+            z-index: 20;
+            padding: 14px;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            backdrop-filter: blur(16px);
+            background: rgba(15,15,15,.9);
+        }
+        .btn-primary {
+            border: none;
+            border-radius: 15px;
+            background: linear-gradient(135deg, var(--gold), #f0d77c);
+            color: #050505;
+            font-weight: 900;
+            font-size: 1rem;
+            cursor: pointer;
+            padding: 13px 24px;
+            min-width: 230px;
+        }
+        .btn-primary:disabled { opacity: .65; cursor: wait; }
+        .submit-note { color: var(--text-muted); font-size: .82rem; line-height: 1.7; }
+        @media (max-width: 820px) {
+            .request-hero, .sticky-submit { flex-direction: column; align-items: stretch; }
+            .mode-grid, .field-grid, .field-grid.three, .check-grid { grid-template-columns: 1fr; }
+            .request-title { font-size: 1.35rem; }
+            .btn-primary { width: 100%; min-width: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-header"></div>
+
+    <main class="request-shell" id="requestShell">
+        <section class="request-hero">
+            <div>
+                <h1 class="request-title" id="pageTitle">طلب <span>جديد</span></h1>
+                <p class="request-subtitle" id="pageSubtitle">أدخل بيانات الطلب والمرفقات اللازمة ليتم استقبالها داخل حسابك ومراجعتها من الفريق المختص.</p>
+            </div>
+            <a class="back-link" href="dashboard.html"><i class="fa-solid fa-arrow-right"></i> الرئيسية</a>
+        </section>
+
+        <div class="mode-grid">
+            <button type="button" class="mode-card" data-mode="order" id="btnOrder">
+                <i class="fa-solid fa-industry"></i>
+                <span><strong>طلب تشغيل</strong><small>طلب تنفيذ مباشر حسب مواصفات القسم</small></span>
+            </button>
+            <button type="button" class="mode-card" data-mode="quote" id="btnQuote">
+                <i class="fa-solid fa-file-signature"></i>
+                <span><strong>طلب عرض سعر</strong><small>بريف تفصيلي لتحديد التكلفة والنطاق</small></span>
+            </button>
+        </div>
+
+        <form id="mainForm" enctype="multipart/form-data">
+            <section class="request-card">
+                <div class="section-head">
+                    <h3>بيانات الطلب الأساسية</h3>
+                    <span class="step-badge">1</span>
+                </div>
+                <div class="field-grid">
+                    <div class="field">
+                        <label for="job_name">اسم المشروع أو الصنف *</label>
+                        <input id="job_name" type="text" name="job_name" class="p-input" required placeholder="مثال: موقع تعريفي للشركة">
+                    </div>
+                    <div class="field">
+                        <label for="service_type">القسم المختص *</label>
+                        <select id="service_type" name="service_type" class="p-select" required>
+                            <option value="طباعة عامة">طباعة أوفست / ديجيتال</option>
+                            <option value="علب كرتون">علب كرتون وتغليف</option>
+                            <option value="أكياس بلاستيك">بلاستيك وتعبئة</option>
+                            <option value="سوشيال ميديا">سوشيال ميديا</option>
+                            <option value="تصميم">تصميم وهوية</option>
+                            <option value="موقع إلكتروني">موقع / برمجة</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="quantity">الكمية التقريبية</label>
+                        <input id="quantity" type="number" name="quantity" class="p-input" min="0" step="1" placeholder="اختياري حسب نوع الطلب">
+                    </div>
+                    <div class="field">
+                        <label for="timeline">موعد التنفيذ المطلوب</label>
+                        <input id="timeline" type="text" name="brief[common][timeline]" class="p-input" placeholder="مثال: خلال أسبوعين / تاريخ محدد">
+                    </div>
+                    <div class="field">
+                        <label for="request_priority">أولوية الطلب</label>
+                        <select id="request_priority" name="brief[common][request_priority]" class="p-select">
+                            <option value="">اختر الأولوية</option>
+                            <option>عادي</option>
+                            <option>عاجل</option>
+                            <option>مرن</option>
+                            <option>تسعير فقط</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="approval_flow">المطلوب بعد المراجعة</label>
+                        <select id="approval_flow" name="brief[common][approval_flow]" class="p-select">
+                            <option value="">اختر</option>
+                            <option>عرض سعر فقط</option>
+                            <option>عرض سعر ثم عينة</option>
+                            <option>بدء تنفيذ بعد الاعتماد</option>
+                            <option>تواصل قبل التسعير</option>
+                        </select>
+                    </div>
+                    <div class="field full">
+                        <label for="details">المواصفات الأساسية *</label>
+                        <textarea id="details" name="details" class="p-input" rows="5" placeholder="اكتب ملخص الطلب أو نطاق العمل المطلوب." required></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="web">
+                <div class="section-head"><h3>متطلبات الموقع أو المنصة</h3><span class="step-badge">ويب</span></div>
+                <div class="field-grid">
+                    <div class="field full">
+                        <label>نوع الموقع أو المنصة</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="موقع تعريفي"> موقع تعريفي</label>
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="متجر إلكتروني"> متجر إلكتروني</label>
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="Landing Page"> Landing Page</label>
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="حجوزات"> حجوزات</label>
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="بوابة عملاء"> بوابة عملاء</label>
+                            <label class="check-item"><input type="checkbox" name="brief[web][project_type][]" value="منصة مخصصة"> منصة مخصصة</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>الصفحات المطلوبة</label><textarea name="brief[web][pages]" class="p-input" placeholder="الرئيسية، الخدمات، المنتجات، تواصل، لوحة إدارة..."></textarea></div>
+                    <div class="field"><label>الوظائف المطلوبة</label><textarea name="brief[web][features]" class="p-input" placeholder="تسجيل، دفع، بحث، نماذج، حجز، عضويات، إشعارات..."></textarea></div>
+                    <div class="field"><label>التكاملات</label><textarea name="brief[web][integrations]" class="p-input" placeholder="دفع، شحن، CRM، ERP، واتساب، بريد، تحليلات..."></textarea></div>
+                    <div class="field"><label>أنواع المستخدمين والصلاحيات</label><textarea name="brief[web][user_roles]" class="p-input" placeholder="عميل، مشرف، موظف، مورد، مدير..."></textarea></div>
+                    <div class="field"><label>جاهزية المحتوى</label><select name="brief[web][content_ready]" class="p-select"><option value="">اختر</option><option>جاهز بالكامل</option><option>يحتاج صياغة</option><option>يحتاج تصوير</option><option>مطلوب إعداده من البداية</option></select></div>
+                    <div class="field"><label>اللغات</label><input name="brief[web][languages]" class="p-input" placeholder="عربي، إنجليزي، لغات أخرى"></div>
+                    <div class="field"><label>الدومين والاستضافة والبريد</label><textarea name="brief[web][hosting_domain]" class="p-input" placeholder="متوفر، مطلوب، نقل، بريد رسمي..."></textarea></div>
+                    <div class="field"><label>اتجاه التصميم</label><textarea name="brief[web][design_reference]" class="p-input" placeholder="روابط مرجعية أو وصف للأسلوب المطلوب."></textarea></div>
+                    <div class="field"><label>الأمان والخصوصية</label><textarea name="brief[web][security]" class="p-input" placeholder="بيانات حساسة، نسخ احتياطي، موافقات، شروط استخدام..."></textarea></div>
+                    <div class="field"><label>الدعم بعد الإطلاق</label><select name="brief[web][maintenance_needed]" class="p-select"><option value="">اختر</option><option>غير مطلوب</option><option>صيانة شهرية</option><option>تدريب وتسليم فقط</option><option>إدارة محتوى مستمرة</option></select></div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="print">
+                <div class="section-head"><h3>متطلبات الطباعة</h3><span class="step-badge">طباعة</span></div>
+                <div class="field-grid three">
+                    <div class="field"><label>نوع المنتج</label><select name="brief[print][print_product_type]" class="p-select"><option value="">اختر</option><option>بروشور</option><option>فلاير</option><option>كتالوج</option><option>كارت</option><option>ملصق</option><option>رول أب</option><option>منتج آخر</option></select></div>
+                    <div class="field"><label>المقاس النهائي</label><input name="brief[print][final_size]" class="p-input" placeholder="مثال: A4 / 10x15"></div>
+                    <div class="field"><label>المقاس المفتوح</label><input name="brief[print][open_size]" class="p-input" placeholder="عند وجود طي"></div>
+                    <div class="field"><label>عدد الصفحات</label><input type="number" min="0" name="brief[print][pages_count]" class="p-input"></div>
+                    <div class="field"><label>نوع الورق</label><input name="brief[print][paper_type]" class="p-input" placeholder="كوشيه، دوبلكس، كانسون..."></div>
+                    <div class="field"><label>وزن الورق</label><input name="brief[print][paper_weight]" class="p-input" placeholder="مثال: 300 جم"></div>
+                    <div class="field"><label>وجه الطباعة</label><select name="brief[print][color_sides]" class="p-select"><option value="">اختر</option><option>وجه واحد</option><option>وجهين</option></select></div>
+                    <div class="field"><label>نظام الألوان</label><select name="brief[print][color_mode]" class="p-select"><option value="">اختر</option><option>ألوان كاملة</option><option>لون واحد</option><option>أبيض وأسود</option><option>بانتون</option></select></div>
+                    <div class="field"><label>حالة التصميم</label><select name="brief[print][artwork_ready]" class="p-select"><option value="">اختر</option><option>جاهز للطباعة</option><option>يحتاج تعديل</option><option>مطلوب تصميم</option></select></div>
+                    <div class="field full">
+                        <label>التشطيبات المطلوبة</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="سلوفان"> سلوفان</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="UV"> UV</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="سبوت UV"> سبوت UV</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="قص"> قص</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="تكسير"> تكسير</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="تخريم"> تخريم</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="تدبيس"> تدبيس</label>
+                            <label class="check-item"><input type="checkbox" name="brief[print][finishing][]" value="لصق"> لصق</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>نوع الطي</label><input name="brief[print][folding_type]" class="p-input"></div>
+                    <div class="field"><label>نوع التجليد</label><input name="brief[print][binding_type]" class="p-input" placeholder="دبوس، سلك، حراري..."></div>
+                    <div class="field"><label>مكان التسليم</label><input name="brief[print][delivery_location]" class="p-input"></div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="carton">
+                <div class="section-head"><h3>متطلبات الكرتون والتغليف</h3><span class="step-badge">تغليف</span></div>
+                <div class="field-grid three">
+                    <div class="field"><label>نوع العبوة</label><select name="brief[carton][box_type]" class="p-select"><option value="">اختر</option><option>علبة كرتون</option><option>كرتونة شحن</option><option>سليف</option><option>علبة هدايا</option><option>علبة غذائية</option></select></div>
+                    <div class="field"><label>المنتج داخل العبوة</label><input name="brief[carton][product_type]" class="p-input"></div>
+                    <div class="field"><label>أبعاد العبوة</label><input name="brief[carton][dimensions]" class="p-input" placeholder="طول × عرض × ارتفاع"></div>
+                    <div class="field"><label>وزن المنتج</label><input name="brief[carton][product_weight]" class="p-input"></div>
+                    <div class="field"><label>نوع الخامة</label><select name="brief[carton][board_type]" class="p-select"><option value="">اختر</option><option>دوبلكس</option><option>كرافت</option><option>مضلع</option><option>مقوى</option><option>Food Grade</option></select></div>
+                    <div class="field"><label>السماكة أو الجراماج</label><input name="brief[carton][board_thickness]" class="p-input"></div>
+                    <div class="field"><label>هل مطلوب طباعة؟</label><select name="brief[carton][printing_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>جهات الطباعة</label><select name="brief[carton][print_sides]" class="p-select"><option value="">اختر</option><option>خارجية فقط</option><option>داخلية وخارجية</option></select></div>
+                    <div class="field"><label>عدد الألوان</label><input name="brief[carton][color_mode]" class="p-input"></div>
+                    <div class="field full">
+                        <label>التشطيبات</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="سلوفان مط"> سلوفان مط</label>
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="سلوفان لامع"> سلوفان لامع</label>
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="UV"> UV</label>
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="سبوت UV"> سبوت UV</label>
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="فويل"> فويل</label>
+                            <label class="check-item"><input type="checkbox" name="brief[carton][coating][]" value="إمبوس"> إمبوس</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>قص فورمة خاص</label><select name="brief[carton][die_cut_required]" class="p-select"><option value="">اختر</option><option>مطلوب</option><option>غير مطلوب</option><option>غير متأكد</option></select></div>
+                    <div class="field"><label>شباك شفاف</label><select name="brief[carton][window_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>يد أو حامل</label><select name="brief[carton][handle_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>طريقة التجميع</label><select name="brief[carton][assembly_method]" class="p-select"><option value="">اختر</option><option>لصق</option><option>تعشيق</option><option>دبوس</option><option>بدون تجميع</option></select></div>
+                    <div class="field"><label>طريقة التوريد</label><input name="brief[carton][packing_method]" class="p-input" placeholder="مفرودة أو مركبة"></div>
+                    <div class="field"><label>عينة قبل الإنتاج</label><select name="brief[carton][sample_required]" class="p-select"><option value="">اختر</option><option>مطلوبة</option><option>غير مطلوبة</option></select></div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="plastic">
+                <div class="section-head"><h3>متطلبات البلاستيك والتعبئة</h3><span class="step-badge">بلاستيك</span></div>
+                <div class="field-grid three">
+                    <div class="field"><label>نوع المنتج</label><select name="brief[plastic][plastic_product_type]" class="p-select"><option value="">اختر</option><option>كيس</option><option>رول</option><option>شرنك</option><option>ستيكر بلاستيك</option><option>عبوة</option><option>غلاف</option><option>فيلم تغليف</option></select></div>
+                    <div class="field"><label>وحدة الكمية</label><select name="brief[plastic][unit_type]" class="p-select"><option value="">اختر</option><option>قطعة</option><option>كجم</option><option>رول</option><option>متر</option></select></div>
+                    <div class="field"><label>نوع الخامة</label><select name="brief[plastic][material_type]" class="p-select"><option value="">اختر</option><option>PE</option><option>PP</option><option>PET</option><option>PVC</option><option>BOPP</option><option>LDPE</option><option>HDPE</option></select></div>
+                    <div class="field"><label>السماكة</label><input name="brief[plastic][thickness]" class="p-input" placeholder="بالميكرون"></div>
+                    <div class="field"><label>المقاسات</label><input name="brief[plastic][dimensions]" class="p-input" placeholder="عرض × ارتفاع / عرض الرول"></div>
+                    <div class="field"><label>الاستخدام النهائي</label><input name="brief[plastic][usage_type]" class="p-input"></div>
+                    <div class="field"><label>ملامسة غذاء</label><select name="brief[plastic][food_grade]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>هل مطلوب طباعة؟</label><select name="brief[plastic][printing_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>عدد ألوان الطباعة</label><input name="brief[plastic][print_colors]" class="p-input"></div>
+                    <div class="field"><label>مساحة الطباعة</label><input name="brief[plastic][print_area]" class="p-input"></div>
+                    <div class="field"><label>شكل الخامة</label><select name="brief[plastic][finish_type]" class="p-select"><option value="">اختر</option><option>شفاف</option><option>مطفي</option><option>لامع</option><option>ملون</option><option>معتم</option></select></div>
+                    <div class="field"><label>نوع اللحام</label><select name="brief[plastic][sealing_type]" class="p-select"><option value="">اختر</option><option>سفلي</option><option>جانبي</option><option>ثلاثي</option><option>بدون لحام</option></select></div>
+                    <div class="field"><label>جنب أو قاعدة توسعة</label><select name="brief[plastic][gusset_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>زيبر</label><select name="brief[plastic][zipper_required]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>فتحة تعليق</label><select name="brief[plastic][hanger_hole]" class="p-select"><option value="">اختر</option><option>نعم</option><option>لا</option></select></div>
+                    <div class="field"><label>قلب الرول</label><input name="brief[plastic][roll_core_size]" class="p-input"></div>
+                    <div class="field"><label>طريقة التعبئة للتوريد</label><input name="brief[plastic][packing_requirement]" class="p-input"></div>
+                    <div class="field"><label>عينة قبل الإنتاج</label><select name="brief[plastic][sample_required]" class="p-select"><option value="">اختر</option><option>مطلوبة</option><option>غير مطلوبة</option></select></div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="social">
+                <div class="section-head"><h3>متطلبات السوشيال ميديا</h3><span class="step-badge">Social</span></div>
+                <div class="field-grid">
+                    <div class="field full">
+                        <label>المنصات المطلوبة</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="Facebook"> Facebook</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="Instagram"> Instagram</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="TikTok"> TikTok</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="LinkedIn"> LinkedIn</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="Snapchat"> Snapchat</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][platforms][]" value="X"> X</label>
+                        </div>
+                    </div>
+                    <div class="field full">
+                        <label>نطاق الخدمة</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="استراتيجية"> استراتيجية</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="إدارة حسابات"> إدارة حسابات</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="تصميم منشورات"> تصميم منشورات</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="كتابة محتوى"> كتابة محتوى</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="تصوير"> تصوير</label>
+                            <label class="check-item"><input type="checkbox" name="brief[social][service_scope][]" value="إعلانات ممولة"> إعلانات ممولة</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>هدف النشاط</label><textarea name="brief[social][business_goal]" class="p-input" placeholder="وعي، مبيعات، تفاعل، إطلاق منتج..."></textarea></div>
+                    <div class="field"><label>الجمهور المستهدف</label><textarea name="brief[social][target_audience]" class="p-input"></textarea></div>
+                    <div class="field"><label>عدد المنشورات شهريًا</label><input type="number" min="0" name="brief[social][monthly_posts]" class="p-input"></div>
+                    <div class="field"><label>عدد الفيديوهات أو الريلز</label><input type="number" min="0" name="brief[social][monthly_reels]" class="p-input"></div>
+                    <div class="field"><label>لغة المحتوى</label><input name="brief[social][content_language]" class="p-input" placeholder="عربي، إنجليزي، لهجة محلية"></div>
+                    <div class="field"><label>أسلوب الخطاب</label><select name="brief[social][brand_tone]" class="p-select"><option value="">اختر</option><option>رسمي</option><option>شبابي</option><option>فاخر</option><option>بسيط</option><option>جريء</option><option>تعليمي</option></select></div>
+                    <div class="field"><label>محاور المحتوى</label><textarea name="brief[social][content_categories]" class="p-input" placeholder="تعريفي، ترويجي، تعليمي، قصص عملاء..."></textarea></div>
+                    <div class="field"><label>المواد المتوفرة</label><textarea name="brief[social][assets_available]" class="p-input" placeholder="شعار، صور، فيديوهات، هوية، حسابات حالية..."></textarea></div>
+                    <div class="field"><label>ميزانية الإعلانات</label><input name="brief[social][ad_budget]" class="p-input"></div>
+                    <div class="field"><label>حسابات مرجعية أو منافسة</label><textarea name="brief[social][competitors]" class="p-input"></textarea></div>
+                    <div class="field"><label>آلية الاعتماد</label><input name="brief[social][approval_process]" class="p-input" placeholder="مسؤول الاعتماد ومدة المراجعة"></div>
+                    <div class="field"><label>دورية التقارير</label><select name="brief[social][reporting_frequency]" class="p-select"><option value="">اختر</option><option>أسبوعي</option><option>شهري</option><option>حسب الحملة</option></select></div>
+                </div>
+            </section>
+
+            <section class="request-card operation-brief" data-operation="design_only">
+                <div class="section-head"><h3>متطلبات التصميم والهوية</h3><span class="step-badge">تصميم</span></div>
+                <div class="field-grid">
+                    <div class="field full">
+                        <label>نطاق التصميم</label>
+                        <div class="check-grid">
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="شعار"> شعار</label>
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="هوية بصرية"> هوية بصرية</label>
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="دليل استخدام"> دليل استخدام</label>
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="مطبوعات"> مطبوعات</label>
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="قوالب سوشيال"> قوالب سوشيال</label>
+                            <label class="check-item"><input type="checkbox" name="brief[design_only][design_scope][]" value="تغليف"> تغليف</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>مرحلة العلامة</label><select name="brief[design_only][brand_stage]" class="p-select"><option value="">اختر</option><option>علامة جديدة</option><option>تطوير هوية قائمة</option><option>تطبيقات تصميم فقط</option></select></div>
+                    <div class="field"><label>وصف النشاط</label><textarea name="brief[design_only][business_description]" class="p-input"></textarea></div>
+                    <div class="field"><label>قيم العلامة</label><textarea name="brief[design_only][brand_values]" class="p-input" placeholder="فاخر، موثوق، سريع، تقني، إنساني..."></textarea></div>
+                    <div class="field"><label>الجمهور المستهدف</label><textarea name="brief[design_only][target_audience]" class="p-input"></textarea></div>
+                    <div class="field"><label>التوجه البصري</label><input name="brief[design_only][visual_direction]" class="p-input" placeholder="فاخر، عصري، تراثي، بسيط، تقني..."></div>
+                    <div class="field"><label>الألوان المفضلة أو المرفوضة</label><input name="brief[design_only][color_preferences]" class="p-input"></div>
+                    <div class="field"><label>تفضيلات الخطوط</label><input name="brief[design_only][typography_preferences]" class="p-input"></div>
+                    <div class="field"><label>قنوات الاستخدام</label><textarea name="brief[design_only][usage_channels]" class="p-input" placeholder="موقع، سوشيال، مطبوعات، متجر، تطبيق، تغليف..."></textarea></div>
+                    <div class="field"><label>صيغ التسليم</label><input name="brief[design_only][formats]" class="p-input" placeholder="PDF, AI, PSD, PNG, SVG..."></div>
+                    <div class="field"><label>جولات التعديل المتوقعة</label><input name="brief[design_only][revisions_expectation]" class="p-input"></div>
+                    <div class="field"><label>الموعد النهائي</label><input name="brief[design_only][deadline]" class="p-input"></div>
+                </div>
+            </section>
+
+            <section class="request-card">
+                <div class="section-head">
+                    <h3>المرفقات</h3>
+                    <span class="step-badge">3</span>
+                </div>
+                <div class="upload-panel">
+                    <div class="field">
+                        <label for="attachment">ملفات داعمة للطلب</label>
+                        <input id="attachment" type="file" name="attachment[]" multiple class="p-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.ai,.psd,.cdr,.doc,.docx,.xls,.xlsx,.zip,.rar">
+                        <div class="upload-rules">الأنواع المقبولة: صور، PDF، ملفات تصميم أو ملفات Office مضغوطة. الحد الأقصى 8 ملفات، 15MB للملف، و60MB إجماليًا.</div>
+                        <div id="fileList" class="file-list"></div>
+                        <div id="uploadProgress" class="progress-wrap">
+                            <div class="progress-track"><span id="progressBar" class="progress-bar"></span></div>
+                            <div id="progressText" class="progress-text">جاري تجهيز الرفع...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div id="msg" class="message"></div>
+
+            <div class="sticky-submit">
+                <div class="submit-note" id="submitNote">سيتم إرسال الطلب إلى الفريق المختص للمراجعة.</div>
+                <button type="submit" id="submitBtn" class="btn-primary">إرسال الطلب</button>
+            </div>
+        </form>
+    </main>
+
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        let mode = urlParams.get('type') === 'quote' ? 'quote' : 'order';
+
+        const serviceMap = {
+            'موقع إلكتروني': 'web',
+            'طباعة عامة': 'print',
+            'علب كرتون': 'carton',
+            'أكياس بلاستيك': 'plastic',
+            'سوشيال ميديا': 'social',
+            'تصميم': 'design_only'
+        };
+        const allowedExt = ['pdf','png','jpg','jpeg','webp','gif','ai','psd','cdr','doc','docx','xls','xlsx','zip','rar'];
+        const maxFiles = 8;
+        const maxFileSize = 15 * 1024 * 1024;
+        const maxTotalSize = 60 * 1024 * 1024;
+
+        const shell = document.getElementById('requestShell');
+        const pageTitle = document.getElementById('pageTitle');
+        const pageSubtitle = document.getElementById('pageSubtitle');
+        const submitBtn = document.getElementById('submitBtn');
+        const submitNote = document.getElementById('submitNote');
+        const msg = document.getElementById('msg');
+        const serviceSelect = document.getElementById('service_type');
+        const fileInput = document.getElementById('attachment');
+        const fileList = document.getElementById('fileList');
+        const progressWrap = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+
+        function escapeText(value) {
+            return window.PortalCore ? window.PortalCore.escapeHtml(value) : String(value || '');
+        }
+
+        function formatBytes(bytes) {
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        function setMessage(text, type) {
+            msg.className = 'message ' + (type || 'error');
+            msg.innerHTML = escapeText(text).replace(/\n/g, '<br>');
+            msg.style.display = 'block';
+        }
+
+        function clearMessage() {
+            msg.style.display = 'none';
+            msg.innerHTML = '';
+            msg.className = 'message';
+        }
+
+        function updateMode(nextMode) {
+            mode = nextMode === 'quote' ? 'quote' : 'order';
+            shell.classList.toggle('quote-mode', mode === 'quote');
+            document.getElementById('btnOrder').classList.toggle('active', mode === 'order');
+            document.getElementById('btnQuote').classList.toggle('active', mode === 'quote');
+            pageTitle.innerHTML = mode === 'quote' ? 'طلب <span>عرض سعر</span>' : 'طلب <span>تشغيل</span>';
+            pageSubtitle.textContent = mode === 'quote'
+                ? 'اختر القسم المختص وأدخل مواصفاته الفنية ليتم إعداد عرض سعر واضح وقابل للتنفيذ.'
+                : 'أدخل مواصفات القسم المختص والمرفقات اللازمة لمراجعة طلب التشغيل.';
+            submitBtn.textContent = mode === 'quote' ? 'إرسال طلب عرض السعر' : 'إرسال طلب التشغيل';
+            submitNote.textContent = mode === 'quote'
+                ? 'سيتم تسجيل الطلب ضمن عروض الأسعار بحالة قيد المراجعة.'
+                : 'سيتم تسجيل الطلب ضمن أوامر التشغيل بحالة قيد المراجعة.';
+            updateOperationBrief();
+        }
+
+        function updateOperationBrief() {
+            const activeKey = serviceMap[serviceSelect.value] || 'print';
+            document.querySelectorAll('.operation-brief').forEach(section => {
+                const active = section.dataset.operation === activeKey;
+                section.classList.toggle('active', active);
+                section.querySelectorAll('input,select,textarea').forEach(input => {
+                    input.disabled = !active;
+                });
+            });
+        }
+
+        function validateFiles() {
+            const files = Array.from(fileInput.files || []);
+            const errors = [];
+            let total = 0;
+            fileList.innerHTML = '';
+            files.forEach(file => {
+                total += file.size || 0;
+                const ext = (file.name.split('.').pop() || '').toLowerCase();
+                if (!allowedExt.includes(ext)) errors.push('نوع ملف غير مدعوم: ' + file.name);
+                if (file.size > maxFileSize) errors.push('حجم الملف يتجاوز 15MB: ' + file.name);
+                const chip = document.createElement('span');
+                chip.className = 'file-chip';
+                chip.textContent = file.name + ' - ' + formatBytes(file.size || 0);
+                fileList.appendChild(chip);
+            });
+            if (files.length > maxFiles) errors.push('الحد الأقصى للمرفقات هو 8 ملفات.');
+            if (total > maxTotalSize) errors.push('إجمالي حجم المرفقات يتجاوز 60MB.');
+            if (errors.length) {
+                setMessage(errors.join('\n'), 'error');
+                return false;
+            }
+            clearMessage();
+            return true;
+        }
+
+        function setSubmitting(active) {
+            submitBtn.disabled = active;
+            submitBtn.textContent = active ? 'جاري الإرسال...' : (mode === 'quote' ? 'إرسال طلب عرض السعر' : 'إرسال طلب التشغيل');
+            progressWrap.style.display = active ? 'block' : 'none';
+            if (!active) {
+                progressBar.style.width = '0%';
+                progressText.textContent = 'جاري تجهيز الرفع...';
+            }
+        }
+
+        function submitWithProgress(formData, api) {
+            return new Promise(async (resolve, reject) => {
+                try {
+                    if (window.PortalCore && window.PortalCore.fetchPortalIdentity) {
+                        await window.PortalCore.fetchPortalIdentity(false);
+                    }
+                } catch (error) {}
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', api, true);
+                xhr.setRequestHeader('Accept', 'application/json');
+                const token = window.PortalCore && window.PortalCore.getCsrfToken ? window.PortalCore.getCsrfToken() : '';
+                if (token) xhr.setRequestHeader('X-CSRF-Token', token);
+                xhr.upload.onprogress = event => {
+                    if (!event.lengthComputable) return;
+                    const pct = Math.max(5, Math.round((event.loaded / event.total) * 100));
+                    progressBar.style.width = pct + '%';
+                    progressText.textContent = 'تم رفع ' + pct + '%';
+                };
+                xhr.onload = () => {
+                    let data = null;
+                    try { data = JSON.parse(xhr.responseText || '{}'); } catch (error) {}
+                    if (xhr.status === 401 || (data && data.message === 'Unauthorized')) {
+                        window.location.href = 'login.html';
+                        return;
+                    }
+                    if (xhr.status >= 200 && xhr.status < 300 && data) {
+                        resolve(data);
+                        return;
+                    }
+                    reject(new Error((data && data.message) ? data.message : 'تعذر تنفيذ الطلب حالياً.'));
+                };
+                xhr.onerror = () => reject(new Error('تعذر الاتصال بالسيرفر أثناء الإرسال.'));
+                xhr.send(formData);
+            });
+        }
+
+        document.querySelectorAll('.mode-card').forEach(button => {
+            button.addEventListener('click', () => updateMode(button.dataset.mode));
+        });
+        serviceSelect.addEventListener('change', updateOperationBrief);
+        fileInput.addEventListener('change', validateFiles);
+        updateMode(mode);
+
+        document.getElementById('mainForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            clearMessage();
+            if (!this.checkValidity()) {
+                this.reportValidity();
+                return;
+            }
+            const qtyValue = Number(document.getElementById('quantity').value || 0);
+            if (qtyValue < 0) {
+                setMessage('الكمية لا يمكن أن تكون بالسالب.', 'error');
+                return;
+            }
+            if (!validateFiles()) return;
+
+            const formData = new FormData(this);
+            const api = mode === 'order' ? 'api/create_order.php' : 'api/request_quote.php';
+            setSubmitting(true);
+            try {
+                const data = await submitWithProgress(formData, api);
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'تعذر إرسال الطلب حالياً.');
+                }
+                setMessage(data.message || 'تم إرسال الطلب بنجاح.', 'success');
+                if (window.PortalCore && window.PortalCore.showToast) {
+                    window.PortalCore.showToast('تم إرسال الطلب بنجاح', 'success');
+                }
+                setTimeout(() => {
+                    window.location.href = mode === 'order' ? 'orders.html' : 'quotes.html';
+                }, 1400);
+            } catch (err) {
+                setMessage(err && err.message ? err.message : 'تعذر إرسال الطلب حالياً.', 'error');
+                setSubmitting(false);
+            }
+        });
+    </script>
+</body>
+</html>

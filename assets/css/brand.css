@@ -1,0 +1,136 @@
+:root {
+    --brand-gold: var(--gold-primary, #d4af37);
+    --brand-gold-soft: var(--gold-soft, rgba(212, 175, 55, 0.22));
+    --brand-teal: color-mix(in srgb, var(--brand-gold) 34%, #18c7a0 66%);
+    --brand-bg: var(--bg-main, #050505);
+    --brand-panel: var(--shell-panel, #131313);
+    --brand-border: var(--line-main, #2d2d2d);
+    --brand-text: var(--text-main, #f3f3f3);
+    --brand-muted: var(--text-muted, #9aa0a6);
+    --brand-danger: color-mix(in srgb, #d84c42 78%, var(--brand-gold) 22%);
+    --brand-success: color-mix(in srgb, #29b36c 70%, var(--brand-gold) 30%);
+    --brand-panel-strong: color-mix(in srgb, var(--brand-panel) 84%, #000 16%);
+    --brand-heading: color-mix(in srgb, var(--brand-text) 86%, var(--brand-gold) 14%);
+    --brand-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+
+body.brand-shell {
+    background:
+        radial-gradient(circle at 9% 14%, color-mix(in srgb, var(--brand-teal) 18%, transparent) 0%, transparent 24%),
+        radial-gradient(circle at 88% 78%, color-mix(in srgb, var(--brand-gold) 18%, transparent) 0%, transparent 28%),
+        var(--brand-bg);
+    color: var(--brand-text);
+    min-height: 100vh;
+    position: relative;
+}
+
+body.brand-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px);
+    background-size: 36px 36px;
+    opacity: 0.34;
+}
+
+body.brand-shell > *:not(.main-navbar):not(.mobile-overlay):not(.mobile-sidebar):not(.pwa-modal):not(.ios-prompt) {
+    position: relative;
+    z-index: 1;
+}
+
+.brand-panel {
+    background: linear-gradient(160deg, var(--brand-panel), var(--brand-panel-strong));
+    border: 1px solid var(--brand-border);
+    border-radius: 16px;
+    box-shadow: var(--brand-shadow);
+}
+
+.brand-section-title {
+    color: var(--brand-heading);
+    letter-spacing: 0.4px;
+    font-weight: 800;
+}
+
+.brand-btn-primary {
+    border: none;
+    border-radius: 11px;
+    padding: 10px 18px;
+    font-family: 'Cairo', sans-serif;
+    font-weight: 800;
+    color: color-mix(in srgb, var(--brand-bg) 90%, #000 10%);
+    cursor: pointer;
+    background: linear-gradient(120deg, var(--brand-gold), color-mix(in srgb, var(--brand-gold) 78%, #7a5400 22%) 60%, var(--brand-teal));
+    box-shadow: 0 10px 22px color-mix(in srgb, var(--brand-gold) 22%, transparent);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.brand-btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 28px color-mix(in srgb, var(--brand-gold) 28%, transparent);
+}
+
+.brand-input,
+.brand-select,
+.brand-textarea {
+    background: var(--brand-panel-strong);
+    border: 1px solid var(--brand-border);
+    border-radius: 10px;
+    color: var(--brand-text);
+    font-family: 'Cairo', sans-serif;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.brand-input:focus,
+.brand-select:focus,
+.brand-textarea:focus {
+    border-color: var(--brand-gold);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-gold) 14%, transparent);
+    outline: none;
+}
+
+.app-footer {
+    text-align: center;
+    margin: 42px auto 18px;
+    max-width: 1100px;
+    color: var(--brand-muted);
+    font-size: 0.82rem;
+    padding: 14px 18px;
+    border-top: 1px solid color-mix(in srgb, var(--brand-gold) 24%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--brand-panel) 68%, transparent), color-mix(in srgb, var(--brand-panel-strong) 82%, transparent));
+    border-radius: 10px;
+}
+
+.app-footer strong {
+    color: var(--brand-gold);
+    font-weight: 800;
+}
+
+.brand-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    border: 1px solid var(--brand-gold-soft);
+    padding: 4px 10px;
+    font-size: 0.76rem;
+    color: color-mix(in srgb, var(--brand-gold) 66%, var(--brand-text) 34%);
+    background: color-mix(in srgb, var(--brand-gold) 8%, transparent);
+}
+
+@media (max-width: 1024px) {
+    body.brand-shell {
+        background: var(--brand-bg);
+    }
+
+    body.brand-shell::before {
+        display: none;
+    }
+
+    .brand-panel {
+        box-shadow: 0 10px 24px color-mix(in srgb, #000 25%, transparent);
+    }
+}

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>حساب جديد | بوابة العملاء</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+
+    <style>
+        :root {
+            --bg-dark: #050505;
+            --card-bg: #111111;
+            --gold-start: #f1d78a;
+            --gold-end: #d4af37;
+            --text-white: #ffffff;
+            --text-gray: #888;
+            --border: #222;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Cairo', sans-serif; }
+
+        body {
+            background-color: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, #151515 0%, #000000 100%);
+            overflow-x: hidden;
+            padding: 20px;
+        }
+
+        .main-wrapper {
+            display: flex;
+            width: 100%;
+            max-width: 1400px;
+            gap: 60px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* --- الجوانب (مختصرة جداً) --- */
+        .side-column {
+            flex: 1;
+            text-align: center;
+            opacity: 0.7;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .side-icon-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .side-icon-box i {
+            font-size: 1.8rem;
+            color: var(--gold-end);
+            margin-bottom: 5px;
+        }
+        .side-icon-box h3 {
+            color: #fff;
+            font-size: 1.1rem;
+            margin: 0;
+        }
+        .side-icon-box p {
+            color: #666;
+            font-size: 0.85rem;
+            max-width: 200px;
+            margin: 0 auto;
+        }
+
+        .slogan-box h2 {
+            font-size: 2.2rem;
+            color: var(--gold-end);
+            font-weight: 800;
+            line-height: 1.2;
+        }
+        .support-info {
+            margin-top: 20px;
+            border: 1px solid #333;
+            padding: 15px;
+            border-radius: 10px;
+            display: inline-block;
+        }
+        .support-info span { display: block; color: #555; font-size: 0.8rem; }
+        .support-info a { color: var(--gold-start); text-decoration: none; font-family: monospace; font-size: 1.1rem; letter-spacing: 1px; }
+
+        /* --- كارد التسجيل (الوسط) --- */
+        .container {
+            flex: 1.4;
+            max-width: 550px;
+            background-color: var(--card-bg);
+            padding: 2.5rem;
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+            position: relative;
+        }
+
+        /* اللمعة الذهبية العلوية */
+        .container::before {
+            content: ''; position: absolute; top: 0; left: 25%; right: 25%; height: 2px;
+            background: linear-gradient(90deg, transparent, var(--gold-end), transparent);
+            box-shadow: 0 0 15px var(--gold-end);
+        }
+
+        .logo-area { text-align: center; margin-bottom: 2rem; }
+        .logo-area img { width: 300px; margin-bottom: 10px; filter: drop-shadow(0 0 8px rgba(212, 175, 55, 0.3)); }
+        .logo-area h1 { font-size: 1.5rem; color: #fff; margin-bottom: 5px; }
+        .logo-area p { color: var(--text-gray); font-size: 0.85rem; }
+
+        /* تنسيق الحقول */
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 6px; color: #aaa; font-size: 0.85rem; }
+        .input-box input {
+            width: 100%; padding: 14px;
+            background: #080808; border: 1px solid #333;
+            border-radius: 8px; color: #fff; font-size: 0.95rem;
+            transition: 0.3s; outline: none;
+        }
+        .input-box input:focus { border-color: var(--gold-end); box-shadow: 0 0 10px rgba(212, 175, 55, 0.1); background: #101010; }
+        .input-box input[type="tel"] { text-align: right; direction: ltr; }
+
+        /* الزر الذهبي الجديد */
+        button.btn-submit {
+            width: 100%;
+            padding: 16px;
+            margin-top: 15px;
+            background: linear-gradient(to bottom, var(--gold-start) 0%, var(--gold-end) 100%);
+            border: none;
+            border-radius: 8px;
+            color: #000; /* نص أسود للتباين */
+            font-weight: 800;
+            font-size: 1.1rem;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
+            transition: transform 0.2s, filter 0.2s;
+        }
+        
+        button.btn-submit:hover {
+            filter: brightness(1.1);
+            transform: translateY(-2px);
+        }
+
+        .footer-link { text-align: center; margin-top: 20px; font-size: 0.85rem; color: #666; }
+        .footer-link a { color: var(--gold-end); text-decoration: none; font-weight: 700; }
+
+        #messageBox { display: none; padding: 12px; margin-bottom: 15px; border-radius: 8px; text-align: center; font-size: 0.9rem; }
+        .success { background: rgba(46, 204, 113, 0.15); color: #2ecc71; border: 1px solid #2ecc71; }
+        .error { background: rgba(231, 76, 60, 0.15); color: #e74c3c; border: 1px solid #e74c3c; }
+
+        /* الموبايل */
+        @media (max-width: 1000px) {
+            .side-column { display: none; }
+            .container { flex: 1; max-width: 100%; padding: 1.5rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="main-wrapper">
+        
+        <div class="side-column">
+            <div class="side-icon-box">
+                <i class="fa-solid fa-bolt"></i>
+                <h3>سرعة التنفيذ</h3>
+                <p>عروض أسعار فورية</p>
+            </div>
+            <div class="side-icon-box">
+                <i class="fa-solid fa-box-open"></i>
+                <h3>متابعة الطلبات</h3>
+                <p>تحديثات لحظية للإنتاج</p>
+            </div>
+            <div class="side-icon-box">
+                <i class="fa-solid fa-file-invoice"></i>
+                <h3>أرشيف مالي</h3>
+                <p>فواتيرك في مكان واحد</p>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="logo-area">
+                <img data-portal-logo src="assets/images/logo.webp" alt="logo">
+                <h1 data-portal-brand-name>Arab Eagles</h1>
+                <p>بوابة العملاء</p>
+            </div>
+
+            <form id="registerForm">
+                <div id="messageBox"></div>
+
+                <div class="form-group">
+                    <label>الاسم / اسم الشركة <span style="color:var(--gold-end)">*</span></label>
+                    <div class="input-box"><input type="text" id="name" placeholder="مثال: مجموعة ARAB EAGLES" required></div>
+                </div>
+
+                <div class="form-group">
+                    <label>رقم الهاتف (واتساب) <span style="color:var(--gold-end)">*</span></label>
+                    <div class="input-box"><input type="tel" id="phone" placeholder="010xxxxxxx" required></div>
+                </div>
+
+                <div class="form-group">
+                    <label>البريد الإلكتروني</label>
+                    <div class="input-box"><input type="email" id="email" placeholder="info@company.com"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>كلمة المرور <span style="color:var(--gold-end)">*</span></label>
+                    <div class="input-box"><input type="password" id="password" placeholder="••••••••" required></div>
+                </div>
+                
+                <div class="form-group">
+                    <label>العنوان</label>
+                    <div class="input-box"><input type="text" id="address" placeholder="المدينة، المنطقة..."></div>
+                </div>
+
+                <button type="submit" class="btn-submit" id="submitBtn">إنشاء حساب جديد</button>
+
+                <div class="footer-link">
+                    لديك حساب بالفعل؟ <a href="login.html" data-portal-link="login.html">تسجيل الدخول</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="side-column">
+            <div class="slogan-box">
+                <h2>من فكرة..<br>إلى أيقونة</h2>
+            </div>
+            
+            <div class="support-info">
+                <span>تحتاج مساعدة؟</span>
+                <a href="mailto:support@areagles.com" data-support-email data-support-email-text="1">support@areagles.com</a>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="js/core.js"></script>
+    <script>
+        if (window.PortalCore && window.PortalCore.bootstrapPublicIdentity) {
+            window.PortalCore.bootstrapPublicIdentity({ pageTitlePrefix: 'إنشاء حساب جديد' });
+        }
+
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            const msgBox = document.getElementById('messageBox');
+            
+            const data = {
+                name: document.getElementById('name').value.trim(),
+                phone: window.PortalCore.normalizePhone(document.getElementById('phone').value),
+                email: document.getElementById('email').value.trim(),
+                password: document.getElementById('password').value,
+                address: document.getElementById('address').value.trim()
+            };
+
+            if (data.password.length < 8) {
+                msgBox.className = 'error';
+                msgBox.innerHTML = '⚠️ كلمة المرور يجب أن تكون 8 أحرف على الأقل';
+                msgBox.style.display = 'block';
+                return;
+            }
+
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> جاري التسجيل...';
+            btn.disabled = true;
+            btn.style.opacity = '0.8';
+            msgBox.style.display = 'none';
+
+            try {
+                const result = await window.PortalCore.apiFetch(window.PortalCore.portalUrl('api/register.php'), {
+                    method: 'POST',
+                    body: data
+                });
+
+                if (result.status === 'success') {
+                    msgBox.className = 'success';
+                    msgBox.innerHTML = '✨ ' + result.message;
+                    msgBox.style.display = 'block';
+                    setTimeout(() => { window.location.href = window.PortalCore.portalUrl('login.html'); }, 2000);
+                } else {
+                    msgBox.className = 'error';
+                    msgBox.innerHTML = '⚠️ ' + result.message;
+                    msgBox.style.display = 'block';
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    btn.style.opacity = '1';
+                }
+            } catch (error) {
+                msgBox.className = 'error';
+                msgBox.innerHTML = 'خطأ في الاتصال بالسيرفر';
+                msgBox.style.display = 'block';
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                btn.style.opacity = '1';
+            }
+        });
+    </script>
+</body>
+</html>

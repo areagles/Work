@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>إعدادات الحساب | Arab Eagles</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+    <link rel="stylesheet" href="css/style.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+
+    <style>
+        body {
+            background:
+                radial-gradient(circle at top right, rgba(212, 175, 55, 0.12), transparent 30%),
+                linear-gradient(180deg, #060606 0%, #0d0d0d 100%);
+        }
+        /* تنسيقات خاصة بكرت البروفايل */
+        .settings-card {
+            background: #121212; border-radius: 20px;
+            border: 1px solid #333; padding: 30px;
+            max-width: 600px; margin: 0 auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            position: relative; overflow: hidden;
+        }
+        .settings-card::before {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+            background: linear-gradient(90deg, #d4af37, #b8860b);
+        }
+
+        .user-avatar-large {
+            width: 80px; height: 80px; border-radius: 50%;
+            border: 3px solid #d4af37; padding: 3px;
+            margin: 0 auto 15px auto; display: block;
+        }
+
+        .card-header { text-align: center; margin-bottom: 30px; border-bottom: 1px dashed #333; padding-bottom: 20px; }
+        .user-name { color: #fff; font-size: 1.2rem; font-weight: 700; margin-bottom: 5px; }
+        .user-phone { color: #888; font-size: 0.9rem; direction: ltr; }
+
+        .input-group { margin-bottom: 20px; }
+        .input-group label { display: block; color: #ccc; margin-bottom: 8px; font-size: 0.9rem; }
+        .form-control {
+            width: 100%; padding: 12px; background: #0a0a0a; border: 1px solid #333;
+            color: #fff; border-radius: 10px; font-size: 1rem; transition: 0.3s;
+        }
+        .form-control:focus { border-color: #d4af37; box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.1); outline: none; }
+
+        .btn-save {
+            width: 100%; padding: 14px; background: linear-gradient(135deg, #d4af37, #b8860b);
+            color: #000; font-weight: 800; font-size: 1rem; border: none;
+            border-radius: 10px; cursor: pointer; margin-top: 10px; transition: 0.3s;
+        }
+        .btn-save:active { transform: scale(0.98); }
+
+        .alert-msg { display: none; padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center; font-weight: bold; font-size: 0.9rem; }
+        .alert-success { background: rgba(46, 204, 113, 0.1); color: #2ecc71; border: 1px solid #2ecc71; }
+        .alert-error { background: rgba(231, 76, 60, 0.1); color: #e74c3c; border: 1px solid #e74c3c; }
+    </style>
+</head>
+<body>
+
+    <div id="app-header"></div>
+
+    <div class="container" style="padding-bottom:110px;">
+        
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:25px; border-bottom:1px solid #222; padding-bottom:15px;">
+            <h2 style="color:#d4af37; margin:0; font-size:1.3rem;">إعدادات الحساب</h2>
+            <a href="dashboard.html" style="background:rgba(255,255,255,0.05); color:#ccc; padding:8px 15px; border-radius:20px; font-size:0.85rem; text-decoration:none; border:1px solid #333;">
+                <i class="fa-solid fa-arrow-right"></i> الرئيسية
+            </a>
+        </div>
+
+        <div class="settings-card">
+            
+            <div class="card-header">
+                <img src="assets/images/icon.png" class="user-avatar-large" alt="User">
+                <div class="user-name" id="displayName">جار التحميل...</div>
+                <div class="user-phone" id="displayPhone">...</div>
+            </div>
+
+            <div id="msgBox" class="alert-msg"></div>
+
+            <form id="passForm">
+                <div class="input-group">
+                    <label>كلمة المرور الحالية</label>
+                    <input type="password" name="current_password" class="form-control" required placeholder="********">
+                </div>
+
+                <div class="input-group">
+                    <label>كلمة المرور الجديدة</label>
+                    <input type="password" name="new_password" id="newPass" class="form-control" required placeholder="6 أحرف على الأقل">
+                </div>
+
+                <div class="input-group">
+                    <label>تأكيد كلمة المرور الجديدة</label>
+                    <input type="password" id="confirmPass" class="form-control" required placeholder="********">
+                </div>
+
+                <div id="passStrength" style="font-size:0.8rem; color:#8f8f8f; margin:6px 0 2px;"></div>
+                <button type="submit" id="saveBtn" class="btn-save">حفظ التغييرات</button>
+            </form>
+        </div>
+
+    </div>
+
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <script>
+        async function loadProfileData() {
+            try {
+                const result = await window.PortalCore.apiFetch('api/get_user_profile.php', { cacheBust: true });
+                if(result.status === 'success') {
+                    document.getElementById('displayName').innerText = result.user.name || '-';
+                    document.getElementById('displayPhone').innerText = result.user.phone || '-';
+                }
+            } catch(e) {
+                if (e && e.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                }
+            }
+        }
+        loadProfileData();
+
+        function measurePassword(password) {
+            let score = 0;
+            if (password.length >= 8) score++;
+            if (/[a-zA-Z]/.test(password) && /[0-9]/.test(password)) score++;
+            if (/[^a-zA-Z0-9]/.test(password)) score++;
+            if (password.length >= 12) score++;
+            if (score <= 1) return { text: 'ضعيفة', color: '#ff6b6b' };
+            if (score === 2) return { text: 'متوسطة', color: '#f1c40f' };
+            return { text: 'قوية', color: '#2ecc71' };
+        }
+
+        document.getElementById('newPass').addEventListener('input', function () {
+            const info = measurePassword(this.value);
+            const strengthEl = document.getElementById('passStrength');
+            strengthEl.textContent = this.value ? `قوة كلمة المرور: ${info.text}` : '';
+            strengthEl.style.color = info.color;
+        });
+
+        document.getElementById('passForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const msgBox = document.getElementById('msgBox');
+            const btn = document.getElementById('saveBtn');
+            const newP = document.getElementById('newPass').value;
+            const confP = document.getElementById('confirmPass').value;
+
+            // التحقق من التطابق
+            if(newP !== confP) {
+                msgBox.innerText = "كلمة المرور الجديدة غير متطابقة.";
+                msgBox.className = "alert-msg alert-error";
+                msgBox.style.display = 'block';
+                return;
+            }
+
+            btn.innerText = "جاري الحفظ...";
+            btn.disabled = true;
+
+            const formData = new FormData(this);
+
+            try {
+                const result = await window.PortalCore.apiFetch('api/change_password.php', { method: 'POST', body: formData });
+
+                if(result.status === 'success') {
+                    msgBox.innerText = result.message;
+                    msgBox.className = "alert-msg alert-success";
+                    if (window.PortalCore && window.PortalCore.showToast) {
+                        window.PortalCore.showToast('تم تحديث كلمة المرور', 'success');
+                    }
+                    this.reset(); // إفراغ الحقول
+                    document.getElementById('passStrength').textContent = '';
+                } else {
+                    msgBox.innerText = result.message;
+                    msgBox.className = "alert-msg alert-error";
+                }
+            } catch(error) {
+                if (error && error.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                    return;
+                }
+                msgBox.innerText = "تعذر الاتصال بالخادم.";
+                msgBox.className = "alert-msg alert-error";
+            }
+            
+            msgBox.style.display = 'block';
+            btn.innerText = "حفظ التغييرات";
+            btn.disabled = false;
+        });
+    </script>
+</body>
+</html>

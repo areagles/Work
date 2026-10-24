@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>طلباتي | Arab Eagles</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/admin-identity.css">
+    
+    <script src="js/core.js"></script>
+    <script src="js/layout.js"></script>
+
+    <style>
+        body {
+            background:
+                radial-gradient(circle at top right, rgba(212, 175, 55, 0.12), transparent 30%),
+                linear-gradient(180deg, #070707 0%, #0d0d0d 100%);
+        }
+        .orders-container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 20px 18px 110px;
+        }
+        .page-title {
+            font-size: 1.7rem; font-weight: 900; color: transparent;
+            background: linear-gradient(to right, #d4af37, #f1c40f);
+            -webkit-background-clip: text; margin-bottom: 10px;
+        }
+        .page-subtitle { color: #9b9b9b; font-size: 0.9rem; margin: 0 0 22px; }
+        
+        .orders-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;
+        }
+        .orders-toolbar {
+            display: grid;
+            grid-template-columns: 1.7fr 1fr;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .toolbar-input,
+        .toolbar-select {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #2e2e2e;
+            background: rgba(255,255,255,0.03);
+            color: #fff;
+            padding: 10px 12px;
+            font-family: inherit;
+        }
+        .toolbar-input:focus,
+        .toolbar-select:focus {
+            outline: none;
+            border-color: var(--gold);
+        }
+        .orders-summary {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .orders-summary .smart-chip strong {
+            color: var(--gold);
+            margin-right: 4px;
+        }
+
+        .order-card {
+            background: var(--panel-bg); border-radius: 20px; position: relative;
+            overflow: hidden; border: 1px solid var(--panel-border);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+            box-shadow: 0 18px 30px rgba(0,0,0,0.28);
+        }
+        /* تمييز الطلبات المنتهية */
+        .order-card.closed { border-color: #27ae60; opacity: 0.8; }
+        .order-card.closed .status-badge { background: rgba(39, 174, 96, 0.2); color: #2ecc71; border-color: #2ecc71; }
+
+        .order-card:hover { transform: translateY(-5px); border-color: var(--gold); opacity: 1; }
+
+        .card-header {
+            padding: 16px 18px; background: rgba(255,255,255,0.03);
+            border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: space-between; align-items: center;
+        }
+        .job-id { color: var(--gold); font-weight: bold; font-family: sans-serif; }
+        .job-date { color: #666; font-size: 0.8rem; }
+
+        .card-body { padding: 20px 18px; }
+        .job-title { font-size: 1.2rem; font-weight: bold; color: #fff; margin-bottom: 15px; }
+
+        .info-row {
+            display: flex; justify-content: space-between; padding: 8px 0;
+            border-bottom: 1px dashed #333; font-size: 0.9rem;
+        }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { color: #888; display: flex; align-items: center; gap: 8px; }
+        .info-val { color: #e0e0e0; font-weight: 600; }
+        .price-val { color: #2ecc71; font-family: sans-serif; }
+
+        .card-footer {
+            padding: 15px 18px; text-align: center; border-top: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.02);
+        }
+        .status-badge {
+            display: inline-block; padding: 6px 15px; border-radius: 20px;
+            font-size: 0.85rem; font-weight: bold;
+            background: rgba(212, 175, 55, 0.1); color: var(--gold); border: 1px solid var(--gold);
+        }
+
+        .loading-state, .error-state, .empty-state {
+            grid-column: 1 / -1; text-align: center; padding: 50px 20px;
+            background: var(--panel-bg); border-radius: 18px; border: 1px dashed rgba(255,255,255,0.08);
+        }
+        .state-icon { font-size: 3rem; color: #333; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div id="app-header"></div>
+
+    <div class="orders-container">
+        <h1 class="page-title">سجل الطلبات</h1>
+        <p class="page-subtitle">متابعة الطلبات الجارية والمكتملة من خلال عرض موحد وواضح.</p>
+
+        <div class="orders-toolbar">
+            <input id="orderSearchInput" class="toolbar-input" type="search" placeholder="ابحث باسم المشروع أو رقم الطلب...">
+            <select id="orderStatusFilter" class="toolbar-select">
+                <option value="all">كل الحالات</option>
+                <option value="open">قيد التنفيذ</option>
+                <option value="closed">مغلقة / مكتملة</option>
+                <option value="review">بانتظار موافقة</option>
+            </select>
+        </div>
+
+        <div id="ordersSummary" class="orders-summary"></div>
+
+        <div id="orders-grid" class="orders-grid">
+            <div class="loading-state">
+                <i class="fas fa-circle-notch fa-spin state-icon" style="color:var(--gold)"></i>
+                <p style="color:#888">جاري تحميل البيانات...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ordersCache = [];
+
+        function escapeText(value) {
+            return window.PortalCore.escapeHtml(value);
+        }
+
+        function renderSummary(list) {
+            const summaryEl = document.getElementById('ordersSummary');
+            if (!summaryEl) return;
+
+            const total = list.length;
+            const closed = list.filter(item => !!item.is_closed).length;
+            const open = total - closed;
+            const review = list.filter(item => String(item.status_text || '').includes('موافقتك')).length;
+
+            summaryEl.innerHTML = `
+                <div class="smart-chip">الإجمالي<strong>${total}</strong></div>
+                <div class="smart-chip">نشطة<strong>${open}</strong></div>
+                <div class="smart-chip">مغلقة<strong>${closed}</strong></div>
+                <div class="smart-chip">بانتظارك<strong>${review}</strong></div>
+            `;
+        }
+
+        function applyFilters() {
+            const searchValue = document.getElementById('orderSearchInput').value.trim().toLowerCase();
+            const statusFilter = document.getElementById('orderStatusFilter').value;
+
+            let filtered = ordersCache.filter(order => {
+                const title = String(order.job_name || '').toLowerCase();
+                const orderId = String(order.id || '');
+                const statusText = String(order.status_text || '');
+
+                const searchMatch = !searchValue || title.includes(searchValue) || orderId.includes(searchValue);
+                if (!searchMatch) return false;
+
+                if (statusFilter === 'open') return !order.is_closed;
+                if (statusFilter === 'closed') return !!order.is_closed;
+                if (statusFilter === 'review') return statusText.includes('موافقتك') || statusText.includes('مراجعة');
+                return true;
+            });
+
+            renderOrders(filtered);
+        }
+
+        function renderOrders(list) {
+            const container = document.getElementById('orders-grid');
+            if (!container) return;
+
+            if (!Array.isArray(list) || list.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-box-open state-icon"></i>
+                        <p style="color:#888; font-size:1.1rem;">لا توجد طلبات مطابقة.</p>
+                        <a href="new_order.html?type=order" style="color:var(--gold); margin-top:10px; display:inline-block; text-decoration:none; font-weight:700;">إنشاء طلب جديد</a>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = list.map(order => {
+                const closedClass = order.is_closed ? 'closed' : '';
+                const status = escapeText(order.status_text || 'قيد المعالجة');
+                const orderName = escapeText(order.job_name || 'بدون اسم');
+                const date = escapeText(order.date_formatted || '-');
+                const price = escapeText(order.price_formatted || '---');
+                const qty = escapeText(order.quantity || '0');
+
+                return `
+                    <div class="order-card ${closedClass}">
+                        <div class="card-header">
+                            <span class="job-id">#${escapeText(order.id)}</span>
+                            <span class="job-date"><i class="far fa-clock"></i> ${date}</span>
+                        </div>
+                        <div class="card-body">
+                            <h3 class="job-title">${orderName}</h3>
+                            <div class="info-row">
+                                <span class="info-label"><i class="fas fa-layer-group"></i> الكمية</span>
+                                <span class="info-val">${qty}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label"><i class="fas fa-money-bill-wave"></i> التكلفة</span>
+                                <span class="info-val price-val">${price}</span>
+                            </div>
+                        </div>
+                        <div class="card-footer">
+                            <span class="status-badge">${status}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function fetchOrders() {
+            const container = document.getElementById('orders-grid');
+            try {
+                const data = await window.PortalCore.apiFetch('api/get_orders.php', { cacheBust: true });
+                if (data.status === 'success' && Array.isArray(data.data)) {
+                    ordersCache = data.data;
+                    renderSummary(ordersCache);
+                    applyFilters();
+                } else {
+                    ordersCache = [];
+                    renderSummary([]);
+                    renderOrders([]);
+                }
+            } catch (err) {
+                if (err && err.code === 'UNAUTHORIZED') {
+                    window.location.href = 'login.html';
+                    return;
+                }
+                console.error(err);
+                container.innerHTML = `
+                    <div class="error-state">
+                        <i class="fas fa-wifi state-icon" style="color:#e74c3c"></i>
+                        <p style="color:#e74c3c">تعذر تحميل البيانات. يرجى التحقق من الاتصال.</p>
+                        <button onclick="fetchOrders()" class="btn-ghost" style="margin-top:15px;">إعادة المحاولة</button>
+                    </div>
+                `;
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            document.getElementById('orderSearchInput').addEventListener('input', applyFilters);
+            document.getElementById('orderStatusFilter').addEventListener('change', applyFilters);
+            fetchOrders();
+        });
+    </script>
+
+</body>
+</html>
